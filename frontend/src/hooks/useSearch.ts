@@ -82,7 +82,6 @@ export function useSearch() {
 
         for await (const event of generator) {
           const { event: eventType, data } = event;
-          console.log('[useSearch] SSE event received:', eventType, data);
 
           if (eventType === 'error') {
             const errMsg = typeof data.detail === 'string' ? data.detail : 'An error occurred';
@@ -127,16 +126,16 @@ export function useSearch() {
                 return s;
               });
             })();
-            console.log('[useSearch] Updating pipelineSteps for', eventType, newSteps);
             updateMessage(sessionId, assistantMsgId, { pipelineSteps: newSteps });
             // Yield to the event loop so React renders this step before
             // processing the next SSE event (defeats React 18 auto-batching).
             await yieldToBrowser();
           }
 
-          // When the final done event arrives with the full result
+          // When the final done event arrives with the full result.
+          // Backend wraps the response: data = { response: SearchResponse, elapsed_ms }
           if (eventType === 'done' && data) {
-            const response = data as unknown as SearchResponse;
+            const response = (data.response ?? data) as SearchResponse;
             updateMessage(sessionId, assistantMsgId, {
               isStreaming: false,
               response,

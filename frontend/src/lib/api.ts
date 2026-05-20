@@ -52,7 +52,6 @@ export function searchStream(
         (parsed as StreamEvent & { event: string }).event =
           eventType as StreamEvent['event'];
       }
-      console.log('[searchStream] yielding event:', parsed.event);
       queue.push(parsed);
       wake();
     } catch (err) {

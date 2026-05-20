@@ -16,7 +16,7 @@ import re
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
+import httpx  # pyright: ignore[reportMissingImports]
 
 from app.models.business import BusinessListing, ReviewData
 from app.models.intent import ParsedIntent
@@ -288,12 +288,10 @@ class SearchAgent:
             location, osm_key, osm_value, extra_tags, intent.count
         )
         logger.info("overpass_results", count=len(overpass_results))
-        print(f"overpass_results>>>>: {overpass_results}")
         # Source 2 – DuckDuckGo (always run to supplement)
         ddg_results = await self._search_duckduckgo(
             intent.category, location.display_name, intent.count
         )
-        print(f"ddg_results>>>>: {ddg_results}")
         logger.info("ddg_results", count=len(ddg_results))
 
         combined = overpass_results + ddg_results
