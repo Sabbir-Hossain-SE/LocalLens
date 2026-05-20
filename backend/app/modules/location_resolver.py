@@ -141,13 +141,29 @@ class LocationResolver:
     async def _resolve_by_ip(
         self, user_ip: Optional[str], radius_km: float
     ) -> ResolvedLocation:
-        """Geolocate using ip-api.com (no API key required)."""
-        # Localhost / private IPs cannot be geolocated
-        if not user_ip or user_ip in ("127.0.0.1", "::1", "localhost"):
-            logger.info("location_ip_private_fallback")
-            return _default_location(radius_km)
+        """
+        Geolocate using ip-api.com.
 
-        url = f"{_IP_API_BASE}/{user_ip}"
+        When the client IP is localhost/private (dev environment), omit the IP
+        so ip-api.com returns the location of the server's own public IP instead
+        of falling back to the hardcoded default.
+        """
+        import ipaddress
+
+        def _is_private(ip: str) -> bool:
+            try:
+                return ipaddress.ip_address(ip).is_private
+            except ValueError:
+                return False
+
+        # Calling ip-api.com without an IP returns the requester's (server's) own location
+        if not user_ip or _is_private(user_ip):
+            url = _IP_API_BASE  # server's public IP
+            log_ip = "server"
+        else:
+            url = f"{_IP_API_BASE}/{user_ip}"
+            log_ip = user_ip
+
         try:
             async with _ip_api_limiter:
                 async with httpx.AsyncClient(timeout=self._client_timeout) as client:
@@ -156,7 +172,7 @@ class LocationResolver:
                     data = resp.json()
 
             if data.get("status") != "success":
-                logger.warning("ip_api_failed", ip=user_ip, message=data.get("message"))
+                logger.warning("ip_api_failed", ip=log_ip, message=data.get("message"))
                 return _default_location(radius_km)
 
             lat = float(data["lat"])
@@ -164,7 +180,7 @@ class LocationResolver:
             city = data.get("city", "")
             region = data.get("regionName", "")
             display = f"{city}, {region}".strip(", ")
-            logger.info("location_resolved_ip", ip=user_ip, display=display)
+            logger.info("location_resolved_ip", ip=log_ip, display=display)
 
             return ResolvedLocation(
                 display_name=display or "Current Location",
@@ -173,7 +189,7 @@ class LocationResolver:
                 location_type="ip_geolocation",
             )
         except Exception as exc:
-            logger.warning("ip_geolocation_error", error=str(exc), ip=user_ip)
+            logger.warning("ip_geolocation_error", error=str(exc), ip=log_ip)
             return _default_location(radius_km)
 
     async def _resolve_zip(self, zip_code: str, radius_km: float) -> ResolvedLocation:

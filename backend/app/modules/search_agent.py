@@ -133,17 +133,19 @@ def _build_overpass_query(
         extra = "".join(f'["{k}"="{v}"]' for k, v in extra_tags.items())
 
     query = (
-        f'[out:json][timeout:{timeout}];'
-        f'('
+        f"[out:json][timeout:{timeout}];"
+        f"("
         f'  node["{osm_key}"="{osm_value}"]{extra}({bbox_str});'
         f'  way["{osm_key}"="{osm_value}"]{extra}({bbox_str});'
-        f');'
-        f'out center;'
+        f");"
+        f"out center;"
     )
     return query
 
 
-def _osm_element_to_listing(element: Dict[str, Any], category: str) -> Optional[BusinessListing]:
+def _osm_element_to_listing(
+    element: Dict[str, Any], category: str
+) -> Optional[BusinessListing]:
     """Convert a single Overpass API element (node or way) to a BusinessListing."""
     tags = element.get("tags", {})
     name = tags.get("name")
@@ -321,7 +323,10 @@ class SearchAgent:
                     resp = await client.post(
                         _OVERPASS_URL,
                         data={"data": query},
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "Accept": "*/*",
+                        },
                     )
                     resp.raise_for_status()
                     data = resp.json()
