@@ -36,6 +36,7 @@ function StepIcon({ status }: { status: PipelineStep['status'] }) {
 }
 
 export default function PipelineProgress({ steps }: PipelineProgressProps) {
+  console.log('[PipelineProgress] render with steps:', steps.map(s => `${s.step}:${s.status}`).join(', '));
   const doneCount = steps.filter((s) => s.status === 'done').length;
   const progressPct = Math.round((doneCount / steps.length) * 100);
 

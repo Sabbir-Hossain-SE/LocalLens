@@ -6,6 +6,10 @@ import { searchStream } from '@/lib/api';
 import { generateId } from '@/lib/utils';
 import type { ChatMessage, PipelineStep, SearchResponse } from '@/lib/types';
 
+// Yield to the browser event loop so React can render between SSE events.
+// Without this, React 18 batches multiple rapid updateMessage calls into one render.
+const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 const PIPELINE_STEPS_ORDER = [
   'intent_parsed',
   'location_resolved',
@@ -66,11 +70,19 @@ export function useSearch() {
       addMessage(sessionId, assistantMsg);
       setStreamingMessageId(assistantMsgId);
 
+      // Show first step as running immediately so the UI isn't blank
+      updateMessage(sessionId, assistantMsgId, {
+        pipelineSteps: buildInitialSteps().map((s, i) =>
+          i === 0 ? { ...s, status: 'running' as const } : s
+        ),
+      });
+
       try {
         const generator = searchStream(query.trim());
 
         for await (const event of generator) {
           const { event: eventType, data } = event;
+          console.log('[useSearch] SSE event received:', eventType, data);
 
           if (eventType === 'error') {
             const errMsg = typeof data.detail === 'string' ? data.detail : 'An error occurred';
@@ -83,40 +95,43 @@ export function useSearch() {
             break;
           }
 
-          // Mark the corresponding step as done and activate next
+          // Mark the corresponding step as done and activate next.
           if (eventType !== 'done') {
-            updateMessage(sessionId, assistantMsgId, {
-              pipelineSteps: (() => {
-                const steps = buildInitialSteps();
-                const stepIndex = PIPELINE_STEPS_ORDER.indexOf(eventType);
-                if (stepIndex === -1) return steps;
+            const newSteps = (() => {
+              const steps = buildInitialSteps();
+              const stepIndex = PIPELINE_STEPS_ORDER.indexOf(eventType);
+              if (stepIndex === -1) return steps;
 
-                return steps.map((s, i) => {
-                  if (i < stepIndex) return { ...s, status: 'done' as const };
-                  if (i === stepIndex) {
-                    let detail: string | undefined;
-                    if (eventType === 'intent_parsed' && data.category) {
-                      detail = `${data.category}${data.count ? `, ${data.count} results` : ''}${data.location ? `, near ${data.location}` : ''}`;
-                    } else if (eventType === 'location_resolved' && data.location) {
-                      detail = String(data.location);
-                    } else if (eventType === 'search_complete' && data.total !== undefined) {
-                      detail = `Found ${data.total} businesses`;
-                    } else if (eventType === 'reviews_aggregated') {
-                      detail = 'Reviews analyzed';
-                    } else if (eventType === 'scoring_complete') {
-                      detail = 'Businesses ranked';
-                    } else if (eventType === 'summary_ready') {
-                      detail = 'Summaries generated';
-                    }
-                    return { ...s, status: 'done' as const, detail };
+              return steps.map((s, i) => {
+                if (i < stepIndex) return { ...s, status: 'done' as const };
+                if (i === stepIndex) {
+                  let detail: string | undefined;
+                  if (eventType === 'intent_parsed' && data.category) {
+                    detail = `${data.category}${data.count ? `, ${data.count} results` : ''}${data.location ? `, near ${data.location}` : ''}`;
+                  } else if (eventType === 'location_resolved' && data.display_name) {
+                    detail = String(data.display_name);
+                  } else if (eventType === 'search_complete' && data.raw_count !== undefined) {
+                    detail = `Found ${data.raw_count} businesses`;
+                  } else if (eventType === 'reviews_aggregated') {
+                    detail = 'Reviews analyzed';
+                  } else if (eventType === 'scoring_complete') {
+                    detail = 'Businesses ranked';
+                  } else if (eventType === 'summary_ready') {
+                    detail = 'Summaries generated';
                   }
-                  // Next step is running
-                  if (i === stepIndex + 1)
-                    return { ...s, status: 'running' as const };
-                  return s;
-                });
-              })(),
-            });
+                  return { ...s, status: 'done' as const, detail };
+                }
+                // Next step is running
+                if (i === stepIndex + 1)
+                  return { ...s, status: 'running' as const };
+                return s;
+              });
+            })();
+            console.log('[useSearch] Updating pipelineSteps for', eventType, newSteps);
+            updateMessage(sessionId, assistantMsgId, { pipelineSteps: newSteps });
+            // Yield to the event loop so React renders this step before
+            // processing the next SSE event (defeats React 18 auto-batching).
+            await yieldToBrowser();
           }
 
           // When the final done event arrives with the full result

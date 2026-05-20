@@ -19,76 +19,96 @@ export async function search(query: string, userIp?: string): Promise<SearchResp
   return res.json() as Promise<SearchResponse>;
 }
 
-export async function* searchStream(
+// Uses the browser's native EventSource API instead of fetch+ReadableStream.
+// EventSource is purpose-built for SSE and avoids the fetch reader buffering
+// that prevents events from being delivered to JavaScript in real time.
+export function searchStream(
   query: string,
   userIp?: string
 ): AsyncGenerator<StreamEvent> {
   const params = new URLSearchParams({ query });
   if (userIp) params.set('user_ip', userIp);
+  const url = `${API_BASE}/search/stream?${params.toString()}`;
 
-  const res = await fetch(`${API_BASE}/search/stream?${params.toString()}`, {
-    method: 'GET',
-    headers: { Accept: 'text/event-stream', 'Cache-Control': 'no-cache' },
-  });
+  const queue: StreamEvent[] = [];
+  let resolveNext: (() => void) | null = null;
+  let finished = false;
+  let streamError: Error | null = null;
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Stream failed (${res.status}): ${text}`);
+  const source = new EventSource(url);
+
+  const wake = () => {
+    if (resolveNext) {
+      const r = resolveNext;
+      resolveNext = null;
+      r();
+    }
+  };
+
+  const handleMessage = (eventType: string) => (e: MessageEvent) => {
+    try {
+      const parsed = JSON.parse(e.data) as StreamEvent;
+      if (!parsed.event) {
+        (parsed as StreamEvent & { event: string }).event =
+          eventType as StreamEvent['event'];
+      }
+      console.log('[searchStream] yielding event:', parsed.event);
+      queue.push(parsed);
+      wake();
+    } catch (err) {
+      console.warn('[searchStream] failed to parse SSE chunk:', e.data, err);
+    }
+  };
+
+  const EVENT_TYPES = [
+    'intent_parsed',
+    'location_resolved',
+    'search_complete',
+    'reviews_aggregated',
+    'scoring_complete',
+    'summary_ready',
+    'done',
+    'error',
+  ];
+  for (const t of EVENT_TYPES) {
+    source.addEventListener(t, handleMessage(t) as EventListener);
   }
 
-  if (!res.body) {
-    throw new Error('No response body for SSE stream');
-  }
+  source.onerror = () => {
+    // EventSource also fires onerror on normal close. Only treat as error
+    // if we haven't seen a 'done' or 'error' event yet.
+    if (!finished) {
+      streamError = new Error('SSE connection error');
+      finished = true;
+      wake();
+    }
+  };
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE messages are separated by double newlines
-      const parts = buffer.split('\n\n');
-      // Keep the last incomplete chunk in the buffer
-      buffer = parts.pop() ?? '';
-
-      for (const part of parts) {
-        const trimmed = part.trim();
-        if (!trimmed) continue;
-
-        // Parse SSE fields
-        let eventType = '';
-        let dataStr = '';
-
-        for (const line of trimmed.split('\n')) {
-          if (line.startsWith('event:')) {
-            eventType = line.slice(6).trim();
-          } else if (line.startsWith('data:')) {
-            dataStr = line.slice(5).trim();
+  async function* generator(): AsyncGenerator<StreamEvent> {
+    try {
+      while (true) {
+        if (queue.length > 0) {
+          const ev = queue.shift()!;
+          yield ev;
+          if (ev.event === 'done' || ev.event === 'error') {
+            finished = true;
+            return;
           }
-        }
-
-        if (!dataStr) continue;
-
-        try {
-          const parsed = JSON.parse(dataStr) as StreamEvent;
-          // If the SSE event field was set, use it; otherwise trust parsed.event
-          if (eventType && !parsed.event) {
-            (parsed as StreamEvent & { event: string }).event = eventType as StreamEvent['event'];
-          }
-          yield parsed;
-        } catch {
-          // Ignore malformed JSON chunks
+        } else if (finished) {
+          if (streamError) throw streamError;
+          return;
+        } else {
+          await new Promise<void>((resolve) => {
+            resolveNext = resolve;
+          });
         }
       }
+    } finally {
+      source.close();
     }
-  } finally {
-    reader.releaseLock();
   }
+
+  return generator();
 }
 
 export async function getHealth(): Promise<{ status: string; version: string }> {

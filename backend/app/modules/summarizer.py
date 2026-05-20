@@ -137,26 +137,12 @@ class Summarizer:
         )
 
     def _call_llm_sync(self, prompt: str) -> Optional[str]:
-        """Synchronous LLM call with an 8-second hard timeout."""
-        import signal
-        from typing import Any
-
+        """Synchronous LLM call — no signal-based timeout (not safe in threads)."""
         llm = self._init_llm()
         if llm is None:
             return None
-
-        def _timeout_handler(signum: int, frame: Any) -> None:
-            raise TimeoutError("LLM summarizer timed out")
-
         try:
-            old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-            signal.alarm(90)
-            try:
-                response = llm.invoke(prompt)
-            finally:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
-
+            response = llm.invoke(prompt)
             text = response.content if hasattr(response, "content") else str(response)
             return text.strip()
         except Exception as exc:
@@ -164,10 +150,17 @@ class Summarizer:
             return None
 
     async def _summarise_one(self, listing: BusinessListing) -> BusinessListing:
-        """Generate a summary for a single listing."""
+        """Generate a summary for a single listing with a 90-second async timeout."""
         prompt = self._build_prompt(listing)
         loop = asyncio.get_event_loop()
-        text = await loop.run_in_executor(None, self._call_llm_sync, prompt)
+        try:
+            text = await asyncio.wait_for(
+                loop.run_in_executor(None, self._call_llm_sync, prompt),
+                timeout=90.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("summarizer_timeout", name=listing.name)
+            text = None
         if not text:
             text = _template_summary(listing)
         return listing.model_copy(update={"summary": text})

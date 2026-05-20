@@ -288,11 +288,12 @@ class SearchAgent:
             location, osm_key, osm_value, extra_tags, intent.count
         )
         logger.info("overpass_results", count=len(overpass_results))
-
+        print(f"overpass_results>>>>: {overpass_results}")
         # Source 2 – DuckDuckGo (always run to supplement)
         ddg_results = await self._search_duckduckgo(
             intent.category, location.display_name, intent.count
         )
+        print(f"ddg_results>>>>: {ddg_results}")
         logger.info("ddg_results", count=len(ddg_results))
 
         combined = overpass_results + ddg_results
@@ -320,18 +321,17 @@ class SearchAgent:
         try:
             async with _overpass_limiter:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(
+                    # GET avoids Content-Type negotiation entirely (no body = no 406)
+                    resp = await client.get(
                         _OVERPASS_URL,
-                        data={"data": query},
+                        params={"data": query},
                         headers={
-                            "Content-Type": "application/x-www-form-urlencoded",
-                            "User-Agent": "LocalLens/1.0",
                             "Accept": "application/json",
+                            "User-Agent": "LocalLens/1.0",
                         },
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                    print(f"data>>>>: {data}")
 
             elements = data.get("elements", [])
             listings: List[BusinessListing] = []
@@ -402,8 +402,19 @@ class SearchAgent:
 
     @staticmethod
     def _ddg_sync_search(query: str, max_results: int) -> List[Dict[str, Any]]:
-        """Synchronous DuckDuckGo search call (run in executor)."""
+        """Synchronous DuckDuckGo search with backoff retry on rate limit."""
+        import time
         from duckduckgo_search import DDGS  # type: ignore
 
-        with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=max_results))
+        _BACKOFF = [5, 15, 30]  # seconds between attempts
+        for attempt in range(3):
+            try:
+                with DDGS() as ddgs:
+                    return list(ddgs.text(query, max_results=max_results))
+            except Exception as exc:
+                err = str(exc)
+                if ("202" in err or "Ratelimit" in err) and attempt < 2:
+                    time.sleep(_BACKOFF[attempt])
+                    continue
+                return []  # give up gracefully after all retries
+        return []
