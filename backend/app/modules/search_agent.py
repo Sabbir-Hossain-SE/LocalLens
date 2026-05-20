@@ -325,11 +325,13 @@ class SearchAgent:
                         data={"data": query},
                         headers={
                             "Content-Type": "application/x-www-form-urlencoded",
-                            "Accept": "*/*",
+                            "User-Agent": "LocalLens/1.0",
+                            "Accept": "application/json",
                         },
                     )
                     resp.raise_for_status()
                     data = resp.json()
+                    print(f"data>>>>: {data}")
 
             elements = data.get("elements", [])
             listings: List[BusinessListing] = []
@@ -337,7 +339,7 @@ class SearchAgent:
                 listing = _osm_element_to_listing(el, category=osm_value)
                 if listing:
                     listings.append(listing)
-            return listings[: count * 3]  # Return more than needed for scoring
+            return listings[: count * 3]
 
         except Exception as exc:
             logger.warning("overpass_search_error", error=str(exc))
