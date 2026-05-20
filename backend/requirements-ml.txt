@@ -1,0 +1,9 @@
+# Optional ML/NLP dependencies (HuggingFace sentiment analysis)
+# Install these for richer sentiment scoring:
+#   pip install -r requirements-ml.txt
+#
+# Without these, the system falls back to keyword-based sentiment (still works fine).
+
+transformers==4.44.0
+torch==2.4.0
+numpy==1.26.4

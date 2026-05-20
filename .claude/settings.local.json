@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node node_modules/typescript/bin/tsc --noEmit)",
+      "Bash(node node_modules/next/dist/bin/next build)",
+      "Bash(.venv/bin/python3 -c \"from app.main import app; print\\('✓ app imports OK'\\)\")"
+    ]
+  }
+}

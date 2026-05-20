@@ -1,0 +1,67 @@
+default:
+  star_rating: 0.40
+  review_count: 0.30
+  sentiment_score: 0.20
+  recency_signal: 0.10
+
+category_overrides:
+  restaurant:
+    star_rating: 0.45
+    review_count: 0.25
+    sentiment_score: 0.20
+    recency_signal: 0.10
+
+  sushi:
+    star_rating: 0.45
+    review_count: 0.25
+    sentiment_score: 0.20
+    recency_signal: 0.10
+
+  cafe:
+    star_rating: 0.40
+    review_count: 0.25
+    sentiment_score: 0.25
+    recency_signal: 0.10
+
+  coffee:
+    star_rating: 0.40
+    review_count: 0.25
+    sentiment_score: 0.25
+    recency_signal: 0.10
+
+  bar:
+    star_rating: 0.35
+    review_count: 0.30
+    sentiment_score: 0.25
+    recency_signal: 0.10
+
+  dentist:
+    star_rating: 0.50
+    review_count: 0.20
+    sentiment_score: 0.25
+    recency_signal: 0.05
+
+  doctor:
+    star_rating: 0.50
+    review_count: 0.20
+    sentiment_score: 0.25
+    recency_signal: 0.05
+
+  gym:
+    star_rating: 0.40
+    review_count: 0.25
+    sentiment_score: 0.25
+    recency_signal: 0.10
+
+  hotel:
+    star_rating: 0.45
+    review_count: 0.30
+    sentiment_score: 0.15
+    recency_signal: 0.10
+
+  affordable:
+    star_rating: 0.30
+    review_count: 0.20
+    sentiment_score: 0.20
+    recency_signal: 0.10
+    price_score: 0.20

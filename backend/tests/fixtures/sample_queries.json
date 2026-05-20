@@ -1,0 +1,71 @@
+[
+  {
+    "query": "best sushi restaurants near me",
+    "expected_category_contains": "sushi",
+    "expected_location": "near_me",
+    "expected_count": 5
+  },
+  {
+    "query": "top 10 coffee shops in Seattle",
+    "expected_category_contains": "cafe",
+    "expected_location_contains": "seattle",
+    "expected_count": 10
+  },
+  {
+    "query": "find me a dentist open now within 3 km",
+    "expected_category_contains": "dentist",
+    "expected_open_now": true,
+    "expected_radius_km": 3.0
+  },
+  {
+    "query": "cheap pizza places in Brooklyn 11201",
+    "expected_category_contains": "pizza",
+    "expected_price_level": "affordable",
+    "expected_location_contains": "11201"
+  },
+  {
+    "query": "3 gyms in Austin TX",
+    "expected_category_contains": "gym",
+    "expected_location_contains": "austin",
+    "expected_count": 3
+  },
+  {
+    "query": "coworking spaces near me sorted by rating",
+    "expected_category_contains": "cowork",
+    "expected_location": "near_me",
+    "expected_sort_by": "rating"
+  },
+  {
+    "query": "fancy restaurants in Manhattan",
+    "expected_category_contains": "restaurant",
+    "expected_price_level": "expensive",
+    "expected_location_contains": "manhattan"
+  },
+  {
+    "query": "nearest pharmacy to me",
+    "expected_category_contains": "pharmacy",
+    "expected_location": "near_me",
+    "expected_sort_by_contains": "distance"
+  },
+  {
+    "query": "yoga studios within 5 miles",
+    "expected_category_contains": "yoga",
+    "expected_radius_km_approx": 8.0
+  },
+  {
+    "query": "best rated bars in Chicago with most reviews",
+    "expected_category_contains": "bar",
+    "expected_location_contains": "chicago"
+  },
+  {
+    "query": "hotels in San Francisco",
+    "expected_category_contains": "hotel",
+    "expected_location_contains": "san francisco"
+  },
+  {
+    "query": "open now grocery stores close to me",
+    "expected_category_contains": "grocery",
+    "expected_location": "near_me",
+    "expected_open_now": true
+  }
+]
