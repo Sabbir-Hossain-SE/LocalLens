@@ -10,10 +10,8 @@ the configured CACHE_TTL_SECONDS.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from contextlib import suppress
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -196,47 +194,12 @@ async def search_stream(
         ]
 
     async def event_generator() -> AsyncGenerator[dict, None]:
-        async def wait_for_disconnect() -> bool:
-            while True:
-                if await request.is_disconnected():
-                    return True
-                await asyncio.sleep(0.25)
-
-        pipeline = run_pipeline(query.strip(), effective_ip, history=history)
         try:
-            while True:
-                next_event = asyncio.create_task(pipeline.__anext__())
-                disconnected = asyncio.create_task(wait_for_disconnect())
-                done, pending = await asyncio.wait(
-                    {next_event, disconnected},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                if disconnected in done and disconnected.result():
-                    logger.info("sse_client_disconnected", query=query[:60])
-                    next_event.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await next_event
-                    await pipeline.aclose()
-                    break
-
-                disconnected.cancel()
-                with suppress(asyncio.CancelledError):
-                    await disconnected
-
-                try:
-                    stream_event = next_event.result()
-                except StopAsyncIteration:
-                    break
-
+            async for stream_event in run_pipeline(
+                query.strip(), effective_ip, history=history
+            ):
                 payload = stream_event.model_dump_json()
                 yield {"event": stream_event.event, "data": payload}
-
-                if await request.is_disconnected():
-                    logger.info("sse_client_disconnected", query=query[:60])
-                    await pipeline.aclose()
-                    break
-
                 if stream_event.event in ("done", "error"):
                     # Record metrics on stream completion
                     if stream_event.event == "done":
@@ -245,9 +208,8 @@ async def search_stream(
                     else:
                         record_error()
                     break
-        except asyncio.CancelledError:
+        except GeneratorExit:
             logger.info("sse_generator_cancelled", query=query[:60])
-            await pipeline.aclose()
             raise
         except Exception as exc:
             logger.error("sse_generator_error", error=str(exc))
