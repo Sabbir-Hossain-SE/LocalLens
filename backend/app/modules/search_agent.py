@@ -196,12 +196,16 @@ def _osm_element_to_listing(
 
 
 def _make_maps_url(name: str, address: Optional[str]) -> str:
-    """Generate a Google Maps search URL for a business."""
+    """Generate a Google Maps place search URL for a business.
+
+    Using /maps/place/ instead of /maps/search/ navigates directly to the
+    business profile page which exposes structured rating data more reliably.
+    """
     query_parts = [name]
     if address:
         query_parts.append(address)
-    query = "+".join(urllib.parse.quote(p) for p in query_parts)
-    return f"https://www.google.com/maps/search/{query}"
+    query = urllib.parse.quote(" ".join(query_parts))
+    return f"https://www.google.com/maps/place/{query}"
 
 
 def _fuzzy_similar(a: str, b: str, threshold: float = 0.8) -> bool:
