@@ -128,7 +128,15 @@ export async function getHealth(): Promise<{ status: string; version: string }> 
   return res.json() as Promise<{ status: string; version: string }>;
 }
 
-export async function transcribe(blob: Blob, filename = 'audio.webm'): Promise<string> {
+function audioFilenameFor(blob: Blob): string {
+  if (blob.type.includes('mp4')) return 'audio.mp4';
+  if (blob.type.includes('mpeg')) return 'audio.mp3';
+  if (blob.type.includes('ogg')) return 'audio.ogg';
+  if (blob.type.includes('wav')) return 'audio.wav';
+  return 'audio.webm';
+}
+
+export async function transcribe(blob: Blob, filename = audioFilenameFor(blob)): Promise<string> {
   const form = new FormData();
   form.append('audio', blob, filename);
   const res = await fetch(`${API_BASE}/transcribe`, {

@@ -29,10 +29,10 @@ Open the **Terminal** app (press `Cmd + Space`, type "Terminal", press Enter), t
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-**2. Install Python, Node.js, and ffmpeg** (the voice-input feature needs ffmpeg):
+**2. Install Python and Node.js:**
 
 ```bash
-brew install python@3.11 node ffmpeg
+brew install python@3.11 node
 ```
 
 **3. Check they all installed correctly:**
@@ -40,27 +40,26 @@ brew install python@3.11 node ffmpeg
 ```bash
 python3 --version       # should say Python 3.11.x or newer
 node --version          # should say v18 or newer
-ffmpeg -version         # should print version info
 ```
+
+> Voice input uses a remote Whisper server. Install `ffmpeg` on that remote Whisper machine, not on this LocalLens machine.
 
 ### On Windows
 
 1. Download and install **Python 3.11+** from <https://www.python.org/downloads/> (during install, tick _"Add Python to PATH"_)
 2. Download and install **Node.js 18+** from <https://nodejs.org/>
-3. Download **ffmpeg** from <https://ffmpeg.org/download.html#build-windows> and add it to your PATH (only needed if you want voice input)
-4. Open **PowerShell** (Start menu → search "PowerShell") and run the same checks:
+3. Open **PowerShell** (Start menu → search "PowerShell") and run the same checks:
 
 ```powershell
 python --version
 node --version
-ffmpeg -version
 ```
 
 ### On Linux (Ubuntu/Debian)
 
 ```bash
 sudo apt update
-sudo apt install -y python3.11 python3.11-venv python3-pip nodejs npm ffmpeg
+sudo apt install -y python3.11 python3.11-venv python3-pip nodejs npm
 ```
 
 ---
@@ -215,6 +214,13 @@ Paste your Groq key (from Step 1) after the `=`. It should look like:
 GROQ_API_KEY=gsk_AbC123YourActualKeyHere
 ```
 
+If you want voice input, also set your remote Whisper server URL. This should be the machine where you installed OpenAI Whisper and `ffmpeg`:
+
+```env
+WHISPER_REMOTE_URL=http://your-tailscale-ip:9001/transcribe
+WHISPER_REMOTE_TIMEOUT_SECONDS=120
+```
+
 Save the file and close it.
 
 ### A1.7. Start the backend
@@ -311,6 +317,8 @@ cat > .env <<'EOF'
 LLM_PROVIDER=groq
 LLM_MODEL=llama-3.1-70b-versatile
 GROQ_API_KEY=paste-your-groq-key-here
+WHISPER_REMOTE_URL=http://your-tailscale-ip:9001/transcribe
+WHISPER_REMOTE_TIMEOUT_SECONDS=120
 EOF
 ```
 
@@ -321,10 +329,12 @@ EOF
 LLM_PROVIDER=groq
 LLM_MODEL=llama-3.1-70b-versatile
 GROQ_API_KEY=paste-your-groq-key-here
+WHISPER_REMOTE_URL=http://your-tailscale-ip:9001/transcribe
+WHISPER_REMOTE_TIMEOUT_SECONDS=120
 "@ | Out-File -Encoding utf8 .env
 ```
 
-Now open `.env` and replace `paste-your-groq-key-here` with your real Groq key.
+Now open `.env`, replace `paste-your-groq-key-here` with your real Groq key, and replace `your-tailscale-ip` with your remote Whisper server's Tailscale IP.
 
 ## B2. Start everything
 
@@ -407,7 +417,17 @@ docker compose down
 
 ### `pip install` fails with "No module named 'pkg_resources'"
 
-This usually happens while installing `openai-whisper`. Two common causes are:
+This usually means an old local Whisper dependency is still being installed. Current LocalLens uses a **remote Whisper server**, so `backend/requirements.txt` should not contain `openai-whisper`.
+
+Check that first:
+
+```bash
+grep openai-whisper backend/requirements.txt
+```
+
+If that prints a line, remove it from `backend/requirements.txt`. Then make sure your venv is Python 3.11+.
+
+Two common causes are:
 
 - Your venv is using Python 3.9 instead of Python 3.11+
 - Your `setuptools` version is too new and no longer provides `pkg_resources`
@@ -440,7 +460,6 @@ python -m pip install --upgrade pip
 python -m pip install "setuptools==80.9.0" wheel
 python -c "import pkg_resources; print('pkg_resources ok')"
 
-python -m pip install openai-whisper==20240930 --no-build-isolation
 python -m pip install -r requirements.txt
 ```
 
@@ -478,11 +497,21 @@ That's normal on the first build (15–30 minutes). The ML libraries are huge. S
 
 ### Voice input button does nothing
 
-Your browser blocked microphone access. Look for the camera/mic icon in the address bar and allow microphone permission for `localhost`.
+Check three things:
+
+1. Your browser allowed microphone access for `localhost`
+2. `backend/.env` has `WHISPER_REMOTE_URL=http://your-tailscale-ip:9001/transcribe`
+3. The remote Whisper server is reachable:
+
+```bash
+curl http://your-tailscale-ip:9001/health
+```
+
+Remember: `ffmpeg` is required on the remote Whisper machine, not on the LocalLens machine.
 
 ### I want to stop using ML features (just basic search)
 
-Edit `backend/requirements.txt` and remove the lines for `torch`, `transformers`, `sentence-transformers`, `chromadb`, `openai-whisper`, and `playwright`. Then re-run `pip install -r requirements.txt`. LocalLens will gracefully fall back to keyword sentiment + DuckDuckGo + Overpass without these.
+Edit `backend/requirements.txt` and remove the lines for `torch`, `transformers`, `sentence-transformers`, `chromadb`, and `playwright`. Then re-run `pip install -r requirements.txt`. LocalLens will gracefully fall back to keyword sentiment + DuckDuckGo + Overpass without these.
 
 ---
 

@@ -28,6 +28,8 @@ build/
 
 .pytest_cache/
 
+.test_cache/
+
 .mypy_cache/
 
 .ruff_cache/
@@ -241,4 +243,3 @@ logs/
 .DS_Store
 
 Thumbs.db
-

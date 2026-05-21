@@ -36,8 +36,8 @@ langfuse==2.50.0
 sentence-transformers==3.1.0
 chromadb==0.5.0
 
-# Phase 10 — Voice input (Whisper)
-openai-whisper==20240930
+# Phase 10 — Voice input
+# Whisper runs on a remote server; this backend forwards audio over HTTP.
 
 # Testing
 pytest==8.3.0

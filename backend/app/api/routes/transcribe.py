@@ -1,55 +1,25 @@
 """
-POST /transcribe — voice-input transcription endpoint (PDF §7.1).
+POST /transcribe - voice-input transcription endpoint.
 
-Accepts a multipart audio upload (any format Whisper supports: WebM, MP4, WAV,
-MP3, OGG) and returns ``{"text": "..."}`` for the recognised speech. The text
-can then be fed into the normal search flow.
-
-Uses OpenAI Whisper running locally (the ``openai-whisper`` package). The
-``base`` model (~139 MB) is the default — it's small enough to be quick on
-CPU and accurate enough for short search queries. The model is lazily loaded
-on first request and cached in-process.
-
-Graceful degradation: if ``openai-whisper`` is not installed the endpoint
-returns 503 with an explanatory message; the rest of the API keeps working.
+The LocalLens backend stays lightweight: it forwards browser audio to a
+remote Whisper service, usually running on a stronger machine reachable over
+Tailscale. The remote service is responsible for OpenAI Whisper, ffmpeg, and
+model storage.
 """
 
 from __future__ import annotations
 
-import asyncio
-import tempfile
-from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
+import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["Voice"])
-
-_whisper_model: Any = None
-_whisper_checked = False
-_MODEL_NAME = "base"  # tradeoff: ~140 MB, English-strong, ~5x realtime on CPU
-
-
-def _get_model() -> Optional[Any]:
-    """Lazily load the Whisper model. Returns None if the package is missing."""
-    global _whisper_model, _whisper_checked
-    if _whisper_checked:
-        return _whisper_model
-    _whisper_checked = True
-    try:
-        import whisper  # type: ignore
-
-        logger.info("whisper_loading", model=_MODEL_NAME)
-        _whisper_model = whisper.load_model(_MODEL_NAME)
-        logger.info("whisper_loaded", model=_MODEL_NAME)
-    except Exception as exc:
-        logger.warning("whisper_unavailable", reason=str(exc))
-        _whisper_model = None
-    return _whisper_model
 
 
 class TranscribeResponse(BaseModel):
@@ -67,23 +37,22 @@ class TranscribeResponse(BaseModel):
 )
 async def transcribe(audio: UploadFile = File(...)) -> TranscribeResponse:
     """
-    Transcribe an uploaded audio blob and return the recognised text.
+    Forward an uploaded audio blob to the configured remote Whisper service.
 
-    The audio is written to a temp file (Whisper expects a filesystem path),
-    transcribed in a thread pool executor (the model is sync), and the temp
-    file is cleaned up before the response is returned.
+    Expected remote API shape:
+      POST /transcribe multipart form field "audio"
+      -> {"text": "...", "language": "..."}
     """
-    model = _get_model()
-    if model is None:
+    settings = get_settings()
+    if not settings.WHISPER_REMOTE_URL:
         raise HTTPException(
             status_code=503,
             detail=(
-                "Whisper is not installed on this server. "
-                "Install with: pip install openai-whisper"
+                "Remote Whisper is not configured. Set WHISPER_REMOTE_URL "
+                "to your Tailscale Whisper server /transcribe endpoint."
             ),
         )
 
-    suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
     try:
         body = await audio.read()
     finally:
@@ -92,25 +61,35 @@ async def transcribe(audio: UploadFile = File(...)) -> TranscribeResponse:
     if not body:
         raise HTTPException(status_code=400, detail="Empty audio payload")
 
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-        tmp.write(body)
+    filename = audio.filename or "audio.webm"
+    content_type = audio.content_type or "application/octet-stream"
+    files = {"audio": (filename, body, content_type)}
 
     try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: model.transcribe(str(tmp_path), language=None, fp16=False),
+        async with httpx.AsyncClient(timeout=settings.WHISPER_REMOTE_TIMEOUT_SECONDS) as client:
+            resp = await client.post(settings.WHISPER_REMOTE_URL, files=files)
+            resp.raise_for_status()
+            payload = resp.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:500]
+        logger.warning(
+            "remote_whisper_http_error",
+            status=exc.response.status_code,
+            detail=detail,
         )
-        text = (result.get("text") or "").strip()
-        language = result.get("language")
-        logger.info("transcribe_ok", chars=len(text), language=language)
-        return TranscribeResponse(text=text, language=language)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Remote Whisper failed ({exc.response.status_code}): {detail}",
+        )
     except Exception as exc:
-        logger.warning("transcribe_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {exc}")
-    finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        logger.warning("remote_whisper_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Remote Whisper unavailable: {exc}")
+
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=502, detail="Remote Whisper returned empty text")
+
+    language = payload.get("language")
+    duration_s = payload.get("duration_s")
+    logger.info("transcribe_ok", chars=len(text), language=language, provider="remote")
+    return TranscribeResponse(text=text, language=language, duration_s=duration_s)

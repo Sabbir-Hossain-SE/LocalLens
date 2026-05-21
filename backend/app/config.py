@@ -53,6 +53,16 @@ class Settings(BaseSettings):
         default="New York, NY", description="Human-readable default location name"
     )
 
+    # Voice transcription
+    WHISPER_REMOTE_URL: str = Field(
+        default="",
+        description="Remote Whisper /transcribe URL, e.g. http://100.x.y.z:9001/transcribe",
+    )
+    WHISPER_REMOTE_TIMEOUT_SECONDS: float = Field(
+        default=120.0,
+        description="Timeout for forwarding uploaded audio to remote Whisper",
+    )
+
     # Langfuse observability (PDF §6.2: "all agent steps traced in Langfuse")
     LANGFUSE_PUBLIC_KEY: str = Field(default="", description="Langfuse public key (pk-lf-...)")
     LANGFUSE_SECRET_KEY: str = Field(default="", description="Langfuse secret key (sk-lf-...)")
