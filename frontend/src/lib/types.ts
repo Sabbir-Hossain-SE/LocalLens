@@ -41,9 +41,24 @@ export interface BusinessListing {
   source: string;
   review_data: ReviewData;
   composite_score: number;
+  scoring_details?: ScoringDetails | null;
   rank: number;
   summary: string | null;
   maps_url: string | null;
+}
+
+export interface ScoreComponent {
+  raw: number | null;
+  normalised: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface ScoringDetails {
+  final_score: number;
+  components: Record<string, ScoreComponent>;
+  semantic_similarity?: number | null;
+  explanation: string;
 }
 
 export interface SearchResponse {

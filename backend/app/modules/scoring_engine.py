@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from app.models.business import BusinessListing
+from app.models.business import BusinessListing, ScoreComponent, ScoringDetails
 from app.models.intent import ParsedIntent
 from app.utils.embeddings import cosine_similarity, embed_batch, embed_text
 from app.utils.logger import get_logger
@@ -136,12 +136,22 @@ def _compute_composite(
 
     Returns a float in [0, 100].
     """
+    score, _ = _compute_score_details(listing, weights)
+    return score
+
+
+def _compute_score_details(
+    listing: BusinessListing,
+    weights: Dict[str, float],
+    semantic_similarity: Optional[float] = None,
+) -> tuple[float, ScoringDetails]:
+    """Calculate score plus UI-facing component details."""
     rd = listing.review_data
 
     star = _normalise_star_rating(rd.average_rating)
     review_count = _normalise_review_count(rd.total_reviews)
     sentiment = _normalise_sentiment(rd.positive_percentage)
-    recency = rd.recency_score  # Already in [0, 1]
+    recency = max(0.0, min(1.0, rd.recency_score))
 
     # Total weight (may not sum to 1 if config has unexpected keys)
     total_weight = (
@@ -153,14 +163,36 @@ def _compute_composite(
     if total_weight == 0:
         total_weight = 1.0
 
-    raw_score = (
-        star * weights.get("star_rating", 0.40)
-        + review_count * weights.get("review_count", 0.30)
-        + sentiment * weights.get("sentiment_score", 0.20)
-        + recency * weights.get("recency_signal", 0.10)
-    )
+    values = {
+        "star_rating": (rd.average_rating, star),
+        "review_count": (float(rd.total_reviews), review_count),
+        "sentiment_score": (rd.positive_percentage, sentiment),
+        "recency_signal": (rd.recency_score, recency),
+    }
+    components: Dict[str, ScoreComponent] = {}
+    raw_score = 0.0
+    for name, (raw, normalised) in values.items():
+        weight = weights.get(name, _DEFAULT_WEIGHTS.get(name, 0.0))
+        contribution = (normalised * weight / total_weight) * 100.0
+        raw_score += normalised * weight
+        components[name] = ScoreComponent(
+            raw=raw,
+            normalised=round(normalised, 3),
+            weight=round(weight, 3),
+            contribution=round(contribution, 2),
+        )
 
-    return round((raw_score / total_weight) * 100, 2)
+    score = round((raw_score / total_weight) * 100, 2)
+    details = ScoringDetails(
+        final_score=score,
+        components=components,
+        semantic_similarity=semantic_similarity,
+        explanation=(
+            "Weighted score from rating, review volume, review sentiment, "
+            "and review recency."
+        ),
+    )
+    return score, details
 
 
 class ScoringEngine:
@@ -222,13 +254,30 @@ class ScoringEngine:
 
         scored: List[BusinessListing] = []
         for i, listing in enumerate(listings):
-            base = _compute_composite(listing, weights)
+            base, details = _compute_score_details(
+                listing,
+                weights,
+                semantic_similarity=semantic_scores[i] if intent.sort_by == "semantic" else None,
+            )
             if intent.sort_by == "semantic":
                 # 70 % weighted composite + 30 % semantic similarity, all in 0–100
                 score = round(0.7 * base + 0.3 * (semantic_scores[i] * 100), 2)
+                details = details.model_copy(
+                    update={
+                        "final_score": score,
+                        "explanation": (
+                            "70% weighted business quality score plus 30% semantic match "
+                            "to the query."
+                        ),
+                    }
+                )
             else:
                 score = base
-            scored.append(listing.model_copy(update={"composite_score": score}))
+            scored.append(
+                listing.model_copy(
+                    update={"composite_score": score, "scoring_details": details}
+                )
+            )
 
         # Sort
         if intent.sort_by == "distance":

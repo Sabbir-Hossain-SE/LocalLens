@@ -193,18 +193,57 @@ def _check_playwright() -> bool:
 async def _scrape_reviews_playwright(
     maps_url: str, max_reviews: int = 10, timeout_s: float = 12.0
 ) -> List[Review]:
+    """Back-compatible wrapper returning only review texts."""
+    reviews, _, _ = await _scrape_maps_details(maps_url, max_reviews, timeout_s)
+    return reviews
+
+
+def _parse_review_count(raw: str) -> int:
+    """Parse review count strings like '1,234' or '(243)'."""
+    try:
+        return int(re.sub(r"[^0-9]", "", raw))
+    except ValueError:
+        return 0
+
+
+def _extract_rating_count(text: str) -> tuple[Optional[float], int]:
+    """Extract Google Maps average rating and review count from page text."""
+    rating: Optional[float] = None
+    total_reviews = 0
+
+    rating_match = re.search(r"\b([1-5](?:\.\d)?)\s*(?:stars?|★)\b", text, re.I)
+    if not rating_match:
+        rating_match = re.search(r"\b([1-5]\.\d)\b", text)
+    if rating_match:
+        try:
+            rating = float(rating_match.group(1))
+        except ValueError:
+            rating = None
+
+    count_match = re.search(r"\(?([\d,]{2,})\)?\s*(?:reviews?|Google reviews?)", text, re.I)
+    if count_match:
+        total_reviews = _parse_review_count(count_match.group(1))
+
+    return rating, total_reviews
+
+
+async def _scrape_maps_details(
+    maps_url: str, max_reviews: int = 10, timeout_s: float = 12.0
+) -> tuple[List[Review], Optional[float], int]:
     """
-    Scrape review text + relative timestamps from a Google Maps search result.
+    Scrape review text, average rating, and review count from Google Maps.
 
     Uses Playwright headless Chromium. Robust to layout changes: returns whatever
     review-like text it can find, with empty result on any failure.
     """
     if not _check_playwright():
-        return []
+        return ([], None, 0)
 
     from playwright.async_api import async_playwright  # type: ignore
 
     reviews: List[Review] = []
+    rating: Optional[float] = None
+    total_reviews = 0
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -221,12 +260,14 @@ async def _scrape_reviews_playwright(
                 # Let the JS settle and reviews mount.
                 await page.wait_for_timeout(2000)
                 html = await page.content()
+                page_text = await page.locator("body").inner_text(timeout=2000)
+                rating, total_reviews = _extract_rating_count(page_text)
             finally:
                 await context.close()
                 await browser.close()
     except Exception as exc:
         logger.warning("playwright_scrape_error", url=maps_url, error=str(exc))
-        return []
+        return ([], None, 0)
 
     try:
         from bs4 import BeautifulSoup  # type: ignore
@@ -251,7 +292,7 @@ async def _scrape_reviews_playwright(
     except Exception as exc:
         logger.warning("review_html_parse_error", error=str(exc))
 
-    return reviews
+    return (reviews, rating, total_reviews)
 
 
 # ---------------------------------------------------------------------------
@@ -291,9 +332,13 @@ class ReviewAggregator:
         # 1. Collect reviews — start from any pre-attached snippets, then
         #    augment via Playwright scrape if possible.
         scraped: List[Review] = []
+        scraped_rating: Optional[float] = None
+        scraped_total_reviews = 0
         if listing.maps_url:
             async with self._scrape_sem:
-                scraped = await _scrape_reviews_playwright(listing.maps_url)
+                scraped, scraped_rating, scraped_total_reviews = await _scrape_maps_details(
+                    listing.maps_url
+                )
 
         # Snippets already attached (DDG body, etc.) become Reviews without timestamps.
         prior = [
@@ -317,8 +362,14 @@ class ReviewAggregator:
         themes = _extract_themes(texts) if texts else []
 
         # 5. Confidence
-        total_reviews = listing.review_data.total_reviews or len(all_reviews)
+        total_reviews = max(
+            listing.review_data.total_reviews,
+            scraped_total_reviews,
+            len(all_reviews),
+        )
         avg_rating = listing.review_data.average_rating
+        if avg_rating is None:
+            avg_rating = scraped_rating
         low_confidence = total_reviews < 5 or avg_rating is None
         reason: Optional[str] = None
         if total_reviews == 0:

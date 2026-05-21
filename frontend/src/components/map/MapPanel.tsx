@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { MapPin, ExternalLink, Navigation } from 'lucide-react';
+import { MapPin, ExternalLink, Navigation, Star } from 'lucide-react';
 import type { BusinessListing } from '@/lib/types';
 import { getScoreColor } from '@/lib/utils';
 
@@ -40,6 +40,7 @@ export default function MapPanel({ results, location }: MapPanelProps) {
   const mapInstanceRef = useRef<LeafletMap | null>(null);
 
   const geocodedResults = results.filter((r) => r.lat !== null && r.lng !== null);
+  const topResult = results[0];
 
   // Build Google Maps URL for route (all results)
   const googleMapsUrl = geocodedResults.length > 0
@@ -180,6 +181,37 @@ export default function MapPanel({ results, location }: MapPanelProps) {
         </a>
       </div>
 
+      {topResult && (
+        <div className="flex-shrink-0 px-4 py-3 border-b border-surface-border bg-surface-card/45">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-slate-600 font-semibold">
+                Top score
+              </p>
+              <h3 className="text-sm font-semibold text-slate-200 truncate">
+                {topResult.name}
+              </h3>
+            </div>
+            <div className="text-right">
+              <div className="text-xl font-bold text-brand">
+                {Math.round(topResult.composite_score)}
+              </div>
+              <div className="text-[10px] text-slate-600">/100</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <Star size={12} className="text-amber-400" fill="currentColor" />
+            <span>
+              {topResult.review_data.average_rating
+                ? `${topResult.review_data.average_rating.toFixed(1)} rating`
+                : 'No rating'}
+            </span>
+            <span>·</span>
+            <span>{topResult.review_data.total_reviews} reviews</span>
+          </div>
+        </div>
+      )}
+
       {/* Map container */}
       <div className="flex-shrink-0 h-56 relative">
         <div ref={mapContainerRef} className="absolute inset-0" />
@@ -243,6 +275,41 @@ export default function MapPanel({ results, location }: MapPanelProps) {
           })}
         </div>
       </div>
+
+      {topResult?.scoring_details && (
+        <div className="flex-shrink-0 border-t border-surface-border bg-surface-DEFAULT px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-slate-300">Score details</h3>
+            <span className="text-xs text-brand font-semibold">
+              {Math.round(topResult.scoring_details.final_score)}/100
+            </span>
+          </div>
+          <div className="space-y-2">
+            {Object.entries(topResult.scoring_details.components).map(([key, part]) => {
+              const label = key.replace(/_/g, ' ');
+              return (
+                <div key={key}>
+                  <div className="flex items-center justify-between text-[11px] mb-1">
+                    <span className="text-slate-500 capitalize">{label}</span>
+                    <span className="text-slate-400">
+                      +{part.contribution.toFixed(1)}
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-surface-card rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-brand"
+                      style={{ width: `${Math.max(3, Math.min(100, part.normalised * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">
+            {topResult.scoring_details.explanation}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
