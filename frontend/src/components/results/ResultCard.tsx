@@ -1,6 +1,6 @@
 'use client';
 
-import { MapPin, Clock, ExternalLink, Phone, Globe, AlertTriangle } from 'lucide-react';
+import { MapPin, Clock, ExternalLink, Phone, Globe, AlertTriangle, Star, ThumbsUp, Activity } from 'lucide-react';
 import type { BusinessListing } from '@/lib/types';
 import ScoreBadge from './ScoreBadge';
 import { cn } from '@/lib/utils';
@@ -58,13 +58,25 @@ export default function ResultCard({ business, animationDelay = 0 }: ResultCardP
           </div>
 
           {/* Category + Source */}
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
             <span className="text-xs font-medium text-brand-light bg-brand/10 px-2 py-0.5 rounded-full capitalize">
               {business.category}
             </span>
             <span className="text-xs text-slate-500 bg-surface-DEFAULT px-2 py-0.5 rounded-full uppercase tracking-wide">
               {business.source}
             </span>
+            {business.review_data?.average_rating && (
+              <span className="text-xs text-amber-300 bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                <Star size={10} fill="currentColor" />
+                {business.review_data.average_rating.toFixed(1)}
+              </span>
+            )}
+            {(business.review_data?.positive_percentage ?? 0) > 0 && (
+              <span className="text-xs text-slate-400 bg-surface-DEFAULT px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                <ThumbsUp size={10} />
+                {Math.round(business.review_data.positive_percentage)}%
+              </span>
+            )}
           </div>
 
           {/* Address */}
@@ -115,6 +127,28 @@ export default function ResultCard({ business, animationDelay = 0 }: ResultCardP
                 >
                   {theme}
                 </span>
+              ))}
+            </div>
+          )}
+
+          {/* Score breakdown */}
+          {business.scoring_details && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-3">
+              {Object.entries(business.scoring_details.components).map(([key, part]) => (
+                <div
+                  key={key}
+                  className="rounded-lg bg-surface-DEFAULT border border-surface-border px-2 py-1.5"
+                >
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <span className="text-[10px] text-slate-600 capitalize truncate">
+                      {key.replace(/_/g, ' ')}
+                    </span>
+                    <Activity size={9} className="text-slate-600" />
+                  </div>
+                  <div className="text-xs text-slate-300 font-semibold">
+                    +{part.contribution.toFixed(1)}
+                  </div>
+                </div>
               ))}
             </div>
           )}

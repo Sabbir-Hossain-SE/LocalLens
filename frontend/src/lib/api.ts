@@ -1,4 +1,4 @@
-import type { SearchResponse, StreamEvent } from './types';
+import type { HealthResponse, MetricsResponse, SearchResponse, StreamEvent } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -139,10 +139,16 @@ export function searchStream(
   return generator();
 }
 
-export async function getHealth(): Promise<{ status: string; version: string }> {
+export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_BASE}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-  return res.json() as Promise<{ status: string; version: string }>;
+  return res.json() as Promise<HealthResponse>;
+}
+
+export async function getMetrics(): Promise<MetricsResponse> {
+  const res = await fetch(`${API_BASE}/metrics`);
+  if (!res.ok) throw new Error(`Metrics failed: ${res.status}`);
+  return res.json() as Promise<MetricsResponse>;
 }
 
 function audioFilenameFor(blob: Blob): string {

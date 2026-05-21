@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { MapPin, ExternalLink, Navigation, Star } from 'lucide-react';
-import type { BusinessListing } from '@/lib/types';
-import { getScoreColor } from '@/lib/utils';
+import { MapPin, ExternalLink, Navigation, Star, Workflow, Database } from 'lucide-react';
+import type { BusinessListing, SearchResponse } from '@/lib/types';
+import { formatElapsed, getScoreColor } from '@/lib/utils';
 
 interface MapPanelProps {
+  response?: SearchResponse;
   results: BusinessListing[];
   location: string;
 }
@@ -35,12 +36,17 @@ declare global {
   }
 }
 
-export default function MapPanel({ results, location }: MapPanelProps) {
+export default function MapPanel({ response, results, location }: MapPanelProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<LeafletMap | null>(null);
 
   const geocodedResults = results.filter((r) => r.lat !== null && r.lng !== null);
   const topResult = results[0];
+  const sourceCounts = results.reduce<Record<string, number>>((acc, item) => {
+    acc[item.source] = (acc[item.source] ?? 0) + 1;
+    return acc;
+  }, {});
+  const pipelineSteps = response?.pipeline_steps ?? [];
 
   // Build Google Maps URL for route (all results)
   const googleMapsUrl = geocodedResults.length > 0
@@ -212,6 +218,44 @@ export default function MapPanel({ results, location }: MapPanelProps) {
         </div>
       )}
 
+      {response && (
+        <div className="flex-shrink-0 px-4 py-3 border-b border-surface-border">
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="rounded-lg bg-surface-card/50 border border-surface-border px-2 py-2">
+              <div className="text-sm font-semibold text-slate-200">{response.total_results}</div>
+              <div className="text-[10px] text-slate-600">ranked</div>
+            </div>
+            <div className="rounded-lg bg-surface-card/50 border border-surface-border px-2 py-2">
+              <div className="text-sm font-semibold text-slate-200">
+                {formatElapsed(response.elapsed_ms)}
+              </div>
+              <div className="text-[10px] text-slate-600">runtime</div>
+            </div>
+            <div className="rounded-lg bg-surface-card/50 border border-surface-border px-2 py-2">
+              <div className="text-sm font-semibold text-slate-200">
+                {Object.keys(sourceCounts).length}
+              </div>
+              <div className="text-[10px] text-slate-600">sources</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 mb-2 text-[11px] text-slate-500">
+            <Database size={12} className="text-brand" />
+            Source coverage
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(sourceCounts).map(([source, count]) => (
+              <span
+                key={source}
+                className="px-2 py-1 rounded-md bg-surface-card border border-surface-border text-[11px] text-slate-400 uppercase"
+              >
+                {source} {count}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Map container */}
       <div className="flex-shrink-0 h-56 relative">
         <div ref={mapContainerRef} className="absolute inset-0" />
@@ -277,7 +321,31 @@ export default function MapPanel({ results, location }: MapPanelProps) {
       </div>
 
       {topResult?.scoring_details && (
-        <div className="flex-shrink-0 border-t border-surface-border bg-surface-DEFAULT px-4 py-3">
+        <div className="flex-shrink-0 border-t border-surface-border bg-surface-DEFAULT px-4 py-3 max-h-[45vh] overflow-y-auto scrollbar-thin">
+          {pipelineSteps.length > 0 && (
+            <div className="mb-4">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Workflow size={12} className="text-brand" />
+                <h3 className="text-xs font-semibold text-slate-300">Pipeline detail</h3>
+              </div>
+              <div className="space-y-1.5">
+                {pipelineSteps.slice(0, 7).map((step) => (
+                  <div
+                    key={String(step.stage)}
+                    className="flex items-center justify-between gap-2 text-[11px]"
+                  >
+                    <span className="text-slate-500 truncate">
+                      {String(step.stage).replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-slate-400">
+                      {typeof step.elapsed_ms === 'number' ? formatElapsed(step.elapsed_ms) : step.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-slate-300">Score details</h3>
             <span className="text-xs text-brand font-semibold">
