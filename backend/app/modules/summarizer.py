@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.models.business import BusinessListing
 from app.models.intent import ParsedIntent
 from app.utils.logger import get_logger
+from app.utils.tracing import trace_llm
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,99 @@ Website: {website}
 
 Write a helpful, factual summary:\
 """
+
+
+# ---------------------------------------------------------------------------
+# Hallucination verifier
+# ---------------------------------------------------------------------------
+
+# Words that are too generic to be considered factual claims worth verifying.
+_GENERIC_TOKENS = {
+    "a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "at", "by",
+    "with", "from", "is", "are", "was", "were", "be", "been", "being", "has",
+    "have", "had", "this", "that", "these", "those", "it", "its", "if", "as",
+    "best", "place", "places", "spot", "spots", "great", "good", "well",
+    "highly", "rated", "reviews", "review", "business", "stand", "out", "make",
+    "makes", "who", "what", "where", "when", "why", "how", "you", "your",
+    "they", "their", "them", "we", "our", "us", "all", "any", "some", "more",
+    "most", "very", "really", "quite", "also", "just", "only", "open", "close",
+    "closed", "near", "nearby", "find", "found", "according", "based",
+}
+
+# Patterns of "factual" content that must be grounded — capitalised multi-word
+# phrases (proper nouns), numbers, percentages, prices.
+_NOUN_PHRASE_RE = __import__("re").compile(r"\b([A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){1,4})\b")
+_NUMERIC_RE = __import__("re").compile(r"(\d+(?:\.\d+)?)\s*(?:%|stars?|reviews?|★|/5|out of 5)?")
+
+
+def _verify_grounding(summary: str, listing: BusinessListing) -> bool:
+    """
+    Return True if every factual claim in *summary* is supported by the source.
+
+    "Source" = the listing's name, category, address, opening_hours, phone,
+    website, sample reviews, recurring themes, and the rating/review counts in
+    review_data.
+
+    Strategy:
+      1. Extract candidate proper-noun phrases (>=2 capitalised words).
+      2. Extract numeric claims (any number, with or without %/stars).
+      3. Each must appear as a case-insensitive substring of the source bundle,
+         OR (for numbers) match the rating / review count exactly.
+
+    On any unsupported claim the summary is treated as hallucinated.
+    """
+    rd = listing.review_data
+    source_parts = [
+        listing.name or "",
+        listing.category or "",
+        listing.address or "",
+        listing.opening_hours or "",
+        listing.phone or "",
+        listing.website or "",
+        " ".join(rd.recurring_themes or []),
+        " ".join(rd.sample_reviews or []),
+    ]
+    source_blob = " | ".join(source_parts).lower()
+
+    # 1. Proper-noun phrase grounding
+    for phrase in _NOUN_PHRASE_RE.findall(summary or ""):
+        if phrase.lower() in source_blob:
+            continue
+        # Tolerate a phrase whose every token (minus generics) appears somewhere
+        # in source — protects against legitimate paraphrases like "Joe Pizza"
+        # vs "Joe's Pizza Restaurant".
+        tokens = [t for t in phrase.lower().split() if t not in _GENERIC_TOKENS]
+        if tokens and all(t in source_blob for t in tokens):
+            continue
+        logger.info("hallucination_phrase", phrase=phrase, name=listing.name)
+        return False
+
+    # 2. Numeric claim grounding
+    allowed_numbers: set[str] = set()
+    if rd.average_rating is not None:
+        allowed_numbers.add(f"{rd.average_rating:.1f}")
+        allowed_numbers.add(str(int(round(rd.average_rating))))
+    allowed_numbers.add(str(rd.total_reviews))
+    allowed_numbers.add(f"{rd.positive_percentage:.0f}")
+    allowed_numbers.add(f"{rd.positive_percentage:.1f}")
+    # Numbers already in source text (e.g. addresses, hours)
+    for tok in source_blob.split():
+        cleaned = tok.strip(",.;:()[]")
+        if cleaned.replace(".", "", 1).isdigit():
+            allowed_numbers.add(cleaned)
+
+    for num in _NUMERIC_RE.findall(summary or ""):
+        if num in allowed_numbers:
+            continue
+        # Tolerate integer/float equivalence ("4" matches "4.0")
+        if "." in num and num.split(".")[0] in allowed_numbers:
+            continue
+        if num + ".0" in allowed_numbers:
+            continue
+        logger.info("hallucination_number", number=num, name=listing.name)
+        return False
+
+    return True
 
 
 def _template_summary(listing: BusinessListing) -> str:
@@ -136,6 +230,7 @@ class Summarizer:
             website=listing.website or "Not available",
         )
 
+    @trace_llm("summarizer.call_llm")
     def _call_llm_sync(self, prompt: str) -> Optional[str]:
         """Synchronous LLM call — no signal-based timeout (not safe in threads)."""
         llm = self._init_llm()
@@ -150,20 +245,50 @@ class Summarizer:
             return None
 
     async def _summarise_one(self, listing: BusinessListing) -> BusinessListing:
-        """Generate a summary for a single listing with a 90-second async timeout."""
+        """
+        Generate a summary for a single listing with a 90-second async timeout.
+
+        After generation, the text is run through ``_verify_grounding``. If a
+        claim in the summary cannot be traced back to source data, we
+        regenerate once with a stricter prompt, then fall back to the
+        deterministic template summary.
+        """
         prompt = self._build_prompt(listing)
+        text = await self._invoke_with_timeout(prompt)
+
+        if text and not _verify_grounding(text, listing):
+            logger.warning(
+                "summarizer_hallucination_detected",
+                name=listing.name,
+                summary=text[:200],
+            )
+            # One retry with a stricter prompt that re-emphasises grounding.
+            stricter = (
+                prompt
+                + "\n\nIMPORTANT: Your previous response contained details NOT "
+                "found above. Rewrite the summary using ONLY the verified facts "
+                "listed above. Do not invent ANY details."
+            )
+            text = await self._invoke_with_timeout(stricter)
+            if text and not _verify_grounding(text, listing):
+                logger.warning("summarizer_hallucination_retry_failed", name=listing.name)
+                text = None  # force template fallback
+
+        if not text:
+            text = _template_summary(listing)
+        return listing.model_copy(update={"summary": text})
+
+    async def _invoke_with_timeout(self, prompt: str) -> Optional[str]:
+        """Run the sync LLM call in an executor under a 90-second async deadline."""
         loop = asyncio.get_event_loop()
         try:
-            text = await asyncio.wait_for(
+            return await asyncio.wait_for(
                 loop.run_in_executor(None, self._call_llm_sync, prompt),
                 timeout=90.0,
             )
         except asyncio.TimeoutError:
-            logger.warning("summarizer_timeout", name=listing.name)
-            text = None
-        if not text:
-            text = _template_summary(listing)
-        return listing.model_copy(update={"summary": text})
+            logger.warning("summarizer_timeout")
+            return None
 
     async def summarise(
         self,
@@ -188,8 +313,16 @@ class Summarizer:
         List[BusinessListing]
             Same listings with the ``summary`` field populated.
         """
-        logger.info("summarizer_start", count=len(listings))
-        semaphore = asyncio.Semaphore(1)
+        # Groq handles parallel requests cleanly; Ollama processes one at a time,
+        # so going wider just queues. Tune concurrency by provider.
+        concurrency = 3 if self._settings.LLM_PROVIDER == "groq" else 1
+        logger.info(
+            "summarizer_start",
+            count=len(listings),
+            provider=self._settings.LLM_PROVIDER,
+            concurrency=concurrency,
+        )
+        semaphore = asyncio.Semaphore(concurrency)
 
         async def _bounded(listing: BusinessListing) -> BusinessListing:
             async with semaphore:

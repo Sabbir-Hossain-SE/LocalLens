@@ -68,8 +68,16 @@ export type StreamEventType =
   | 'reviews_aggregated'
   | 'scoring_complete'
   | 'summary_ready'
+  | 'clarification_needed'
   | 'done'
   | 'error';
+
+export interface ClarificationPayload {
+  question: string;
+  options: string[];
+  current_category?: string;
+  current_location?: string;
+}
 
 export interface StreamEvent {
   event: StreamEventType;
@@ -89,6 +97,7 @@ export interface ChatMessage {
   isStreaming?: boolean;
   timestamp: Date;
   errorMessage?: string;
+  clarification?: ClarificationPayload;
 }
 
 export interface ChatSession {

@@ -7,9 +7,28 @@ from the search agent all the way to the response formatter.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+
+class Review(BaseModel):
+    """A single review with text, optional rating, and timestamp."""
+
+    text: str = Field(description="Review body text")
+    rating: Optional[float] = Field(
+        default=None, ge=0.0, le=5.0, description="Stars given by this reviewer (0-5)"
+    )
+    timestamp: Optional[datetime] = Field(
+        default=None, description="When the review was posted"
+    )
+    sentiment_label: Optional[str] = Field(
+        default=None, description="POSITIVE / NEGATIVE from sentiment model"
+    )
+    sentiment_score: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, description="Confidence of the sentiment label"
+    )
 
 
 class ReviewData(BaseModel):
@@ -36,7 +55,12 @@ class ReviewData(BaseModel):
         description="Normalised recency signal (0=old, 1=very recent)",
     )
     sample_reviews: List[str] = Field(
-        default_factory=list, description="Up to 5 representative review snippets"
+        default_factory=list,
+        description="Up to 5 representative review snippets (text-only, back-compat)",
+    )
+    reviews: List[Review] = Field(
+        default_factory=list,
+        description="Structured review objects with text, rating, timestamp, sentiment",
     )
     low_confidence: bool = Field(
         default=False,

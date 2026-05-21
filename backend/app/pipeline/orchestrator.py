@@ -24,6 +24,7 @@ import traceback
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.models.business import BusinessListing
+from app.models.intent import HistoryTurn
 from app.models.response import SearchResponse, StreamEvent
 from app.modules import (
     IntentParser,
@@ -35,6 +36,7 @@ from app.modules import (
     Summarizer,
 )
 from app.utils.logger import get_logger
+from app.utils.tracing import flush as _flush_tracing
 
 logger = get_logger(__name__)
 
@@ -46,9 +48,42 @@ def _make_event(event: str, step: int, data: Dict[str, Any]) -> StreamEvent:
     return StreamEvent(event=event, data=data, step=step, total_steps=_TOTAL_STEPS)
 
 
+def _build_clarification(intent) -> tuple[str, list[str]]:  # type: ignore[no-untyped-def]
+    """
+    Produce a (question, options) pair when the intent confidence is low.
+
+    The question is targeted at whichever field looks ambiguous. We prefer
+    asking about the category (most common cause of low confidence), then
+    location, then sort preference.
+    """
+    raw = (intent.raw_query or "").lower()
+    cat = (intent.category or "").lower().strip()
+
+    # Heuristic 1: generic category ("place", "thing", "business", or empty)
+    if cat in ("", "place", "thing", "business", "spot") or "find places" in raw:
+        return (
+            "What kind of place are you looking for?",
+            ["Restaurants", "Cafes", "Bars", "Services"],
+        )
+
+    # Heuristic 2: missing or vague location
+    if not intent.location or intent.location.lower() in ("anywhere", "somewhere"):
+        return (
+            "Where should I search?",
+            ["Near me", "Same area as last time", "A specific city or zip"],
+        )
+
+    # Heuristic 3: fall back to the most common reason — refine the category
+    return (
+        f'Did you mean "{intent.category}", or something more specific?',
+        [intent.category.title(), "Be more specific", "Cancel"],
+    )
+
+
 async def run_pipeline(
     query: str,
     user_ip: Optional[str] = None,
+    history: Optional[List[HistoryTurn]] = None,
 ) -> AsyncGenerator[StreamEvent, None]:
     """
     Execute the full LocalLens pipeline as an async generator.
@@ -85,7 +120,7 @@ async def run_pipeline(
     # ------------------------------------------------------------------ #
     try:
         step_start = time.monotonic()
-        intent = await intent_parser.parse(query)
+        intent = await intent_parser.parse(query, history=history)
         step_ms = int((time.monotonic() - step_start) * 1000)
         step_meta = {
             "stage": "intent_parser",
@@ -109,6 +144,24 @@ async def run_pipeline(
         )
         logger.info("pipeline_step", stage="intent_parsed", ms=step_ms)
         yield event
+
+        # PDF §7.1: when the intent parser is unsure, ask one clarifying
+        # question before continuing. Confidence < 0.6 is the threshold;
+        # follow-up queries (which inherit a prior intent) are exempt.
+        if intent.confidence < 0.6 and not intent.is_followup:
+            question, options = _build_clarification(intent)
+            logger.info("clarification_needed", confidence=intent.confidence, question=question)
+            yield _make_event(
+                "clarification_needed",
+                step=0,
+                data={
+                    "question": question,
+                    "options": options,
+                    "current_category": intent.category,
+                    "current_location": intent.location,
+                },
+            )
+            return
     except Exception as exc:
         logger.error("pipeline_error", stage="intent_parser", error=str(exc))
         yield _make_event("error", step=0, data={"stage": "intent_parser", "error": str(exc)})
@@ -301,3 +354,6 @@ async def run_pipeline(
             step=6,
             data={"stage": "response_formatter", "error": str(exc), "traceback": traceback.format_exc()},
         )
+    finally:
+        # Push buffered Langfuse events at the end of every pipeline run.
+        _flush_tracing()

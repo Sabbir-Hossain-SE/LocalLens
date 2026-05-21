@@ -12,6 +12,10 @@ services:
       - LLM_MODEL=${LLM_MODEL:-gemma3:12b}
       - CACHE_TTL_SECONDS=3600
       - CACHE_DIR=/app/.cache
+      # Langfuse (leave empty to disable tracing)
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://langfuse-server:3000}
     volumes:
       - backend_cache:/app/.cache
     # depends_on:
@@ -30,6 +34,36 @@ services:
       - backend
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Langfuse self-hosted observability stack (PDF §6.2 + §7.2)
+  # Start with:  docker compose --profile observability up
+  # ---------------------------------------------------------------------------
+  langfuse-db:
+    image: postgres:15
+    profiles: ["observability"]
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    volumes:
+      - langfuse_db:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  langfuse-server:
+    image: langfuse/langfuse:2
+    profiles: ["observability"]
+    depends_on:
+      - langfuse-db
+    ports:
+      - "3001:3000"
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-prod}
+      - SALT=${LANGFUSE_SALT:-change-me-in-prod}
+      - NEXTAUTH_URL=http://localhost:3001
+      - TELEMETRY_ENABLED=false
+    restart: unless-stopped
+
   # ollama:
   #   image: ollama/ollama:latest
   #   ports:
@@ -40,4 +74,5 @@ services:
 
 volumes:
   backend_cache:
+  langfuse_db:
   # ollama_models:

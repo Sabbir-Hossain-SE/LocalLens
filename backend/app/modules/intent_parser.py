@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.config import get_settings
-from app.models.intent import ParsedIntent, SearchFilters
+from app.models.intent import HistoryTurn, ParsedIntent, SearchFilters
 from app.utils.logger import get_logger
+from app.utils.tracing import trace_llm
 
 logger = get_logger(__name__)
 
@@ -188,6 +189,37 @@ def _regex_fallback(query: str) -> ParsedIntent:
     )
 
 
+# Words/phrases that signal a follow-up refinement of a prior result set.
+# When any of these match AND a prior turn exists, the new intent inherits
+# category + location from the prior turn.
+_FOLLOWUP_PATTERNS = [
+    r"\bcheaper\b", r"\bmore expensive\b", r"\baffordable", r"\bbudget\b",
+    r"\bopen now\b", r"\bopen today\b", r"\bopen\s+(?:late|right now)",
+    r"\bhigher rated\b", r"\bbetter rated\b", r"\bonly\s+\d+", r"\bmore (?:options|results)\b",
+    r"\bshow me (?:more|cheaper|other)", r"\bany (?:other|more)", r"\bdifferent\b",
+    r"\bcloser\b", r"\bnearby\b", r"\bwithin\b", r"\bsame (?:area|place)\b",
+    r"\bjust the\b", r"\bonly (?:the )?ones?\b",
+]
+_FOLLOWUP_RE = re.compile("|".join(_FOLLOWUP_PATTERNS), re.IGNORECASE)
+
+
+def _detect_followup(query: str, history: Optional[List[HistoryTurn]]) -> bool:
+    """
+    Heuristic: a query is a follow-up if there's prior history AND either
+      - it matches a follow-up phrase pattern, OR
+      - it's very short (≤4 tokens) and lacks an explicit category noun.
+    """
+    if not history:
+        return False
+    if _FOLLOWUP_RE.search(query):
+        return True
+    tokens = [t for t in re.findall(r"[a-z]+", query.lower()) if len(t) > 1]
+    # Short query without a recognised category keyword = likely a refinement
+    if len(tokens) <= 4 and not any(t in _CATEGORY_KEYWORDS for t in tokens):
+        return True
+    return False
+
+
 class IntentParser:
     """
     Parses raw user queries into structured ParsedIntent objects.
@@ -199,6 +231,74 @@ class IntentParser:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._llm: Any = None  # Lazy-initialised
+        self._classifier: Any = None
+        self._classifier_id2label: Optional[Dict[int, str]] = None
+        self._classifier_checked = False
+
+    # ------------------------------------------------------------------
+    # Fast path — fine-tuned DistilBERT classifier (PDF §7.1)
+    # ------------------------------------------------------------------
+
+    def _init_classifier(self) -> Optional[Any]:
+        """Try to load the fine-tuned intent classifier exactly once."""
+        if self._classifier_checked:
+            return self._classifier
+        self._classifier_checked = True
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+
+            from transformers import (  # type: ignore
+                AutoTokenizer,
+                AutoModelForSequenceClassification,
+                pipeline as hf_pipeline,
+            )
+
+            model_dir = _Path(__file__).resolve().parents[2] / "models" / "intent_classifier"
+            if not (model_dir / "config.json").exists():
+                logger.info("intent_classifier_unavailable", path=str(model_dir))
+                return None
+
+            label_map_file = model_dir / "label_map.json"
+            if label_map_file.exists():
+                self._classifier_id2label = {
+                    int(k): v for k, v in _json.loads(label_map_file.read_text())["id2label"].items()
+                }
+
+            tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
+            model = AutoModelForSequenceClassification.from_pretrained(str(model_dir))
+            self._classifier = hf_pipeline(
+                "text-classification",
+                model=model,
+                tokenizer=tokenizer,
+                truncation=True,
+                max_length=64,
+                top_k=1,
+            )
+            logger.info("intent_classifier_ready", path=str(model_dir))
+        except Exception as exc:
+            logger.info("intent_classifier_init_failed", error=str(exc))
+            self._classifier = None
+        return self._classifier
+
+    def _classify_category(self, query: str) -> Optional[tuple[str, float]]:
+        """Return (label, confidence) if the classifier is ready and confident."""
+        clf = self._init_classifier()
+        if clf is None:
+            return None
+        try:
+            preds = clf(query)
+            # `top_k=1` returns a list of dicts (or list-of-list depending on version)
+            top = preds[0] if isinstance(preds[0], dict) else preds[0][0]
+            label = top["label"]
+            score = float(top["score"])
+            # Resolve label index → category if the model returned LABEL_0 style ids
+            if label.startswith("LABEL_") and self._classifier_id2label:
+                label = self._classifier_id2label.get(int(label.split("_")[1]), label)
+            return (label, score)
+        except Exception as exc:
+            logger.warning("intent_classifier_inference_error", error=str(exc))
+            return None
 
     def _init_llm(self) -> Optional[Any]:
         """Attempt to initialise the LangChain LLM.  Returns None on failure."""
@@ -237,7 +337,10 @@ class IntentParser:
             logger.warning("intent_parser_llm_init_failed", error=str(exc))
             return None
 
-    def _call_llm(self, query: str) -> Optional[Dict[str, Any]]:
+    @trace_llm("intent_parser.call_llm")
+    def _call_llm(
+        self, query: str, prev: Optional[HistoryTurn] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Call the LLM and parse its JSON response.
 
@@ -252,6 +355,14 @@ class IntentParser:
             return None
 
         prompt = _SYSTEM_PROMPT.format(query=query)
+        if prev is not None:
+            prompt = (
+                f"Previous turn — query: {prev.query!r}, category: {prev.category!r}, "
+                f"location: {prev.location!r}.\n"
+                "If the new query is a follow-up (e.g. 'cheaper', 'open now', 'more like that'), "
+                "REUSE the previous category and location instead of defaulting to 'restaurant' / 'near_me'.\n\n"
+                + prompt
+            )
 
         def _timeout_handler(signum: int, frame: Any) -> None:
             raise TimeoutError("LLM call timed out")
@@ -297,17 +408,27 @@ class IntentParser:
             confidence=float(data.get("confidence", 0.9)),
         )
 
-    async def parse(self, query: str) -> ParsedIntent:
+    async def parse(
+        self,
+        query: str,
+        history: Optional[List[HistoryTurn]] = None,
+    ) -> ParsedIntent:
         """
         Parse a natural-language query into a ParsedIntent.
 
         Tries the LLM first; falls back to regex parsing if the LLM
-        is unavailable or returns unparseable output.
+        is unavailable or returns unparseable output. When ``history`` is
+        provided, follow-up phrases ("cheaper", "open now", "show me more")
+        inherit the prior turn's category/location instead of defaulting
+        to "restaurant" / "near_me".
 
         Parameters
         ----------
         query:
             Raw user query string (e.g. "best sushi near me open now").
+        history:
+            Optional list of prior turns from the same chat session. Only
+            the most recent turn is currently used for follow-up detection.
 
         Returns
         -------
@@ -315,26 +436,68 @@ class IntentParser:
             Structured representation of the search intent.
         """
         logger.info("intent_parsing_start", query=query[:80])
-        llm_data = self._call_llm(query)
-        if llm_data:
-            try:
-                intent = self._build_from_llm_data(llm_data, raw_query=query)
-                logger.info(
-                    "intent_parsed_llm",
-                    category=intent.category,
-                    location=intent.location,
-                    confidence=intent.confidence,
-                )
-                return intent
-            except Exception as exc:
-                logger.warning("intent_parser_build_failed", error=str(exc))
+        is_followup = _detect_followup(query, history)
+        prev = history[-1] if history else None
+        intent: Optional[ParsedIntent] = None
 
-        # Regex fallback
-        intent = _regex_fallback(query)
-        logger.info(
-            "intent_parsed_regex",
-            category=intent.category,
-            location=intent.location,
-            confidence=intent.confidence,
-        )
+        # 1. FASTEST PATH — fine-tuned DistilBERT classifier (PDF §7.1).
+        #    Only used when confidence ≥ 0.7 AND there's no follow-up history
+        #    to layer on (follow-ups need the LLM's contextual reasoning).
+        if not is_followup:
+            clf = self._classify_category(query)
+            if clf is not None and clf[1] >= 0.7:
+                category, score = clf
+                # Build the rest of the intent from the regex parser, then
+                # override the category with the classifier's prediction.
+                base = _regex_fallback(query)
+                intent = base.model_copy(
+                    update={"category": category, "confidence": score}
+                )
+                logger.info(
+                    "intent_parsed_classifier",
+                    category=category,
+                    confidence=score,
+                )
+
+        # 2. LLM path (still the most flexible).
+        if intent is None:
+            llm_data = self._call_llm(query, prev=prev)
+            if llm_data:
+                try:
+                    intent = self._build_from_llm_data(llm_data, raw_query=query)
+                    logger.info(
+                        "intent_parsed_llm",
+                        category=intent.category,
+                        location=intent.location,
+                        confidence=intent.confidence,
+                    )
+                except Exception as exc:
+                    logger.warning("intent_parser_build_failed", error=str(exc))
+
+        # 3. Regex fallback (always works).
+        if intent is None:
+            intent = _regex_fallback(query)
+            logger.info(
+                "intent_parsed_regex",
+                category=intent.category,
+                location=intent.location,
+                confidence=intent.confidence,
+            )
+
+        # Layer follow-up context: inherit category/location from prior turn
+        # when the current query doesn't specify them.
+        if is_followup and prev:
+            inherited = intent.model_copy(
+                update={
+                    "category": prev.category or intent.category,
+                    "location": prev.location or intent.location,
+                    "is_followup": True,
+                }
+            )
+            logger.info(
+                "intent_followup_applied",
+                inherited_category=prev.category,
+                inherited_location=prev.location,
+            )
+            return inherited
         return intent

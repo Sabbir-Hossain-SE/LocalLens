@@ -19,15 +19,27 @@ export async function search(query: string, userIp?: string): Promise<SearchResp
   return res.json() as Promise<SearchResponse>;
 }
 
+export interface PrevTurn {
+  query: string;
+  category?: string;
+  location?: string;
+}
+
 // Uses the browser's native EventSource API instead of fetch+ReadableStream.
 // EventSource is purpose-built for SSE and avoids the fetch reader buffering
 // that prevents events from being delivered to JavaScript in real time.
 export function searchStream(
   query: string,
-  userIp?: string
+  userIp?: string,
+  prev?: PrevTurn
 ): AsyncGenerator<StreamEvent> {
   const params = new URLSearchParams({ query });
   if (userIp) params.set('user_ip', userIp);
+  if (prev?.query) {
+    params.set('prev_query', prev.query);
+    if (prev.category) params.set('prev_category', prev.category);
+    if (prev.location) params.set('prev_location', prev.location);
+  }
   const url = `${API_BASE}/search/stream?${params.toString()}`;
 
   const queue: StreamEvent[] = [];
@@ -114,4 +126,19 @@ export async function getHealth(): Promise<{ status: string; version: string }> 
   const res = await fetch(`${API_BASE}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return res.json() as Promise<{ status: string; version: string }>;
+}
+
+export async function transcribe(blob: Blob, filename = 'audio.webm'): Promise<string> {
+  const form = new FormData();
+  form.append('audio', blob, filename);
+  const res = await fetch(`${API_BASE}/transcribe`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Transcription failed (${res.status}): ${text}`);
+  }
+  const data = (await res.json()) as { text: string };
+  return data.text ?? '';
 }
