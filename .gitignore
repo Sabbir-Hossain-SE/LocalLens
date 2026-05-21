@@ -21,7 +21,6 @@ env/
 ENV/
 .venv-*/
 venv-*/
-backend/venv-py39-old/
 
 *.egg-info/
 .eggs/
