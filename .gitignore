@@ -1,128 +1,42 @@
-# ---------------------------------------------------------------------------
-# Secrets and local environment files
-# ---------------------------------------------------------------------------
-.env
-.env.*
-!.env.example
-!.env.*.example
-
-# ---------------------------------------------------------------------------
-# Python / FastAPI backend
-# ---------------------------------------------------------------------------
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
-*.pyd
-*$py.class
-
 .venv/
 venv/
 env/
-ENV/
-.venv-*/
-venv-*/
-
+.env
 *.egg-info/
-.eggs/
-build/
 dist/
-pip-wheel-metadata/
-
+build/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.pyre/
-.coverage
-.coverage.*
-coverage.xml
 htmlcov/
-
-# Jupyter local checkpoints
-.ipynb_checkpoints/
-*/.ipynb_checkpoints/
-
-# ---------------------------------------------------------------------------
-# Backend runtime storage and generated ML/vector data
-# ---------------------------------------------------------------------------
+.coverage
 backend/.cache/
-backend/cache/
-backend/tmp/
-backend/temp/
 
-# ChromaDB / vector-store local persistence, if enabled later
-.chroma/
-chroma/
-chroma_db/
-chromadb/
-backend/.chroma/
-backend/chroma/
-backend/chroma_db/
-backend/chromadb/
-
-# Local model/download caches. Keep documented model placeholders tracked.
-.cache/
-backend/.huggingface/
-backend/.transformers/
-backend/.torch/
-backend/.sentence_transformers/
-
-# Whisper/audio scratch files
-*.wav
-*.mp3
-*.m4a
-*.flac
-*.ogg
-
-# ---------------------------------------------------------------------------
-# Node / Next.js frontend
-# ---------------------------------------------------------------------------
+# Node / Next.js
 node_modules/
-frontend/node_modules/
-
 .next/
-frontend/.next/
 out/
-frontend/out/
+.DS_Store
+*.pem
+frontend/.env.local
 
-*.tsbuildinfo
-
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# ---------------------------------------------------------------------------
-# Playwright / browser test output
-# ---------------------------------------------------------------------------
-test-results/
-playwright-report/
-blob-report/
-playwright/.cache/
-
-# ---------------------------------------------------------------------------
-# Docker / local service data
-# ---------------------------------------------------------------------------
-docker-data/
-postgres-data/
-langfuse-data/
-langfuse_db/
-
-# ---------------------------------------------------------------------------
-# Logs
-# ---------------------------------------------------------------------------
-*.log
-logs/
-
-# ---------------------------------------------------------------------------
-# Editor, assistant, and OS-local files
-# ---------------------------------------------------------------------------
+# Editor
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
-.claude/settings.local.json
-
+# OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# HuggingFace model cache
+~/.cache/huggingface/
