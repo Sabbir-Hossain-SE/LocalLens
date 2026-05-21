@@ -95,6 +95,7 @@ export interface ChatMessage {
   response?: SearchResponse;
   pipelineSteps?: PipelineStep[];
   isStreaming?: boolean;
+  cancelled?: boolean;
   timestamp: Date;
   errorMessage?: string;
   clarification?: ClarificationPayload;

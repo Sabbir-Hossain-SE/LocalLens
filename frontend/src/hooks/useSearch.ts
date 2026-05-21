@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { searchStream } from '@/lib/api';
 import { generateId } from '@/lib/utils';
@@ -27,6 +27,8 @@ function buildInitialSteps(): PipelineStep[] {
 }
 
 export function useSearch() {
+  const activeControllerRef = useRef<AbortController | null>(null);
+  const activeRunRef = useRef<{ sessionId: string; assistantMsgId: string } | null>(null);
   const {
     currentSessionId,
     createSession,
@@ -36,6 +38,24 @@ export function useSearch() {
     setStreamingMessageId,
     isSearching,
   } = useChatStore();
+
+  const cancelSearch = useCallback(() => {
+    const active = activeRunRef.current;
+    activeControllerRef.current?.abort();
+
+    if (active) {
+      updateMessage(active.sessionId, active.assistantMsgId, {
+        isStreaming: false,
+        cancelled: true,
+        pipelineSteps: undefined,
+      });
+    }
+
+    setIsSearching(false);
+    setStreamingMessageId(null);
+    activeControllerRef.current = null;
+    activeRunRef.current = null;
+  }, [setIsSearching, setStreamingMessageId, updateMessage]);
 
   const submitQuery = useCallback(
     async (query: string) => {
@@ -88,6 +108,9 @@ export function useSearch() {
       };
       addMessage(sessionId, assistantMsg);
       setStreamingMessageId(assistantMsgId);
+      const controller = new AbortController();
+      activeControllerRef.current = controller;
+      activeRunRef.current = { sessionId, assistantMsgId };
 
       // Show first step as running immediately so the UI isn't blank
       updateMessage(sessionId, assistantMsgId, {
@@ -97,7 +120,7 @@ export function useSearch() {
       });
 
       try {
-        const generator = searchStream(query.trim(), undefined, prev);
+        const generator = searchStream(query.trim(), undefined, prev, controller.signal);
 
         for await (const event of generator) {
           const { event: eventType, data } = event;
@@ -181,6 +204,15 @@ export function useSearch() {
           }
         }
       } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          updateMessage(sessionId, assistantMsgId, {
+            isStreaming: false,
+            cancelled: true,
+            pipelineSteps: undefined,
+          });
+          return;
+        }
+
         const errorMsg =
           err instanceof Error ? err.message : 'Unknown error occurred';
 
@@ -200,6 +232,10 @@ export function useSearch() {
           pipelineSteps: undefined,
         });
       } finally {
+        if (activeRunRef.current?.assistantMsgId === assistantMsgId) {
+          activeControllerRef.current = null;
+          activeRunRef.current = null;
+        }
         setIsSearching(false);
         setStreamingMessageId(null);
       }
@@ -215,5 +251,5 @@ export function useSearch() {
     ]
   );
 
-  return { submitQuery, isSearching };
+  return { submitQuery, cancelSearch, isSearching };
 }

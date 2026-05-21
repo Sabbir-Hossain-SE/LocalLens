@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Terminal } from "lucide-react";
+import { AlertCircle, OctagonPause, Terminal } from "lucide-react";
 import { useChatStore } from "@/store/chatStore";
 import { useSearch } from "@/hooks/useSearch";
 import UserMessage from "./UserMessage";
@@ -77,7 +77,7 @@ const LOCALLENS_LOGO = (
 
 export default function ChatArea() {
   const { getCurrentSession, isSearching } = useChatStore();
-  const { submitQuery } = useSearch();
+  const { submitQuery, cancelSearch } = useSearch();
   const session = getCurrentSession();
   const messages = session?.messages ?? [];
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -213,7 +213,14 @@ export default function ChatArea() {
                         <ResultsList response={msg.response} />
                       )}
 
-                      {!msg.isStreaming && !msg.response && !msg.clarification && (
+                      {!msg.isStreaming && msg.cancelled && (
+                        <div className="flex items-center gap-2 text-sm text-slate-400">
+                          <OctagonPause size={16} className="text-red-400" />
+                          <span>Search stopped.</span>
+                        </div>
+                      )}
+
+                      {!msg.isStreaming && !msg.response && !msg.clarification && !msg.cancelled && (
                         <p className="text-slate-500 text-sm italic">
                           No results returned.
                         </p>
@@ -232,6 +239,7 @@ export default function ChatArea() {
       <div className="flex-shrink-0 px-4 pb-4 pt-2">
         <SearchInput
           onSubmit={handleSubmit}
+          onCancel={cancelSearch}
           isLoading={isSearching}
           initialValue={suggestedQuery}
           onInitialValueConsumed={() => setSuggestedQuery("")}

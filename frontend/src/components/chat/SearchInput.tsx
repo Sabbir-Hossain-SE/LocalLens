@@ -7,6 +7,7 @@ import { transcribe } from "@/lib/api";
 
 interface SearchInputProps {
   onSubmit: (query: string) => void;
+  onCancel?: () => void;
   isLoading?: boolean;
   placeholder?: string;
   initialValue?: string;
@@ -15,6 +16,7 @@ interface SearchInputProps {
 
 export default function SearchInput({
   onSubmit,
+  onCancel,
   isLoading = false,
   placeholder = 'Ask LocalLens anything… "Best ramen near downtown Seattle"',
   initialValue = "",
@@ -160,19 +162,21 @@ export default function SearchInput({
         </button>
 
         <button
-          onClick={handleSubmit}
-          disabled={!value.trim() || isLoading}
+          onClick={isLoading ? onCancel : handleSubmit}
+          disabled={isLoading ? !onCancel : !value.trim()}
           className={cn(
             "flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center",
             "transition-all duration-200",
-            value.trim() && !isLoading
+            isLoading
+              ? "bg-red-500/90 hover:bg-red-500 text-white shadow-md shadow-red-500/30"
+              : value.trim()
               ? "bg-brand hover:bg-brand-dark text-white shadow-md shadow-brand/30 hover:scale-105 active:scale-95"
               : "bg-surface-DEFAULT text-slate-600 cursor-not-allowed",
           )}
-          aria-label="Send message"
+          aria-label={isLoading ? "Stop search" : "Send message"}
         >
           {isLoading ? (
-            <Loader2 size={16} className="animate-spin" />
+            <Square size={13} fill="currentColor" />
           ) : (
             <Send size={15} />
           )}
