@@ -1,42 +1,245 @@
 # Python
-__pycache__/
-*.py[cod]
-*.pyo
-.venv/
-venv/
-env/
-.env
-*.egg-info/
-dist/
-build/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-backend/.cache/
 
-# Node / Next.js
-node_modules/
-.next/
-out/
-.DS_Store
-*.pem
-frontend/.env.local
+__pycache__/
+
+*.py[cod]
+
+*.pyo
+
+*.pyd
+
+*$py.class
+
+.venv/
+
+venv/
+
+env/
+
+.env
+
+*.egg-info/
+
+dist/
+
+pip-wheel-metadata/
+
+build/
+
+.pytest_cache/
+
+.test_cache/
+
+.mypy_cache/
+
+.ruff_cache/
+
+htmlcov/
+
+.pyre/
+
+.coverage
+
+.coverage.*
+
+
+
+# Backend runtime storage and generated ML/vector data
+
+backend/cache/
+
+backend/tmp/
+
+backend/temp/
+
+
 
 # Editor
+
 .vscode/
+
 .idea/
+
 *.swp
+
 *.swo
 
+
+
 # OS
+
 .DS_Store
+
 Thumbs.db
 
+
+
 # Logs
+
 *.log
+
 logs/
 
-# HuggingFace model cache
+
+
+
+
+# Whisper/audio scratch files
+
+*.wav
+
+*.mp3
+
+*.m4a
+
+*.flac
+
+*.ogg
+
+
+
+# Jupyter local checkpoints
+
+.ipynb_checkpoints/
+
+*/.ipynb_checkpoints/
+
+
+
+# ChromaDB / vector-store local persistence, if enabled later
+
+.chroma/
+
+chroma/
+
+chroma_db/
+
+chromadb/
+
+
+
+
+
+# Local model/download caches. Keep documented model placeholders tracked.
+
+.cache/
+
+backend/.huggingface/
+
 ~/.cache/huggingface/
+
+backend/.transformers/
+
+backend/.torch/
+
+backend/.sentence_transformers/
+
+
+
+
+
+# ---------------------------------------------------------------------------
+
+# Node / Next.js frontend
+
+# ---------------------------------------------------------------------------
+
+node_modules/
+
+frontend/node_modules/
+
+
+
+.next/
+
+frontend/.next/
+
+out/
+
+frontend/out/
+
+
+
+*.tsbuildinfo
+
+frontend/next-env.d.ts
+
+
+
+npm-debug.log*
+
+yarn-debug.log*
+
+yarn-error.log*
+
+pnpm-debug.log*
+
+
+
+# ---------------------------------------------------------------------------
+
+# Playwright / browser test output
+
+# ---------------------------------------------------------------------------
+
+test-results/
+
+playwright-report/
+
+blob-report/
+
+
+
+# ---------------------------------------------------------------------------
+
+# Docker / local service data
+
+# ---------------------------------------------------------------------------
+
+docker-data/
+
+postgres-data/
+
+langfuse-data/
+
+langfuse_db/
+
+
+
+# ---------------------------------------------------------------------------
+
+# Logs
+
+# ---------------------------------------------------------------------------
+
+*.log
+
+logs/
+
+
+
+# ---------------------------------------------------------------------------
+
+# Editor, assistant, and OS-local files
+
+# ---------------------------------------------------------------------------
+
+.vscode/
+
+.idea/
+
+*.swp
+
+*.swo
+
+*~
+
+
+
+.claude/settings.local.json
+
+
+
+.DS_Store
+
+Thumbs.db

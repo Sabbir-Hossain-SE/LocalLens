@@ -47,6 +47,25 @@ export function useSearch() {
         sessionId = createSession();
       }
 
+      // Look up the most recent assistant message in this session — its
+      // resolved category + location become follow-up context for the backend.
+      const session = useChatStore.getState().sessions.find((s) => s.id === sessionId);
+      const lastUserMsg = session?.messages
+        .slice()
+        .reverse()
+        .find((m) => m.type === 'user');
+      const lastAssistant = session?.messages
+        .slice()
+        .reverse()
+        .find((m) => m.type === 'assistant' && m.response);
+      const prev = lastAssistant?.response && lastUserMsg
+        ? {
+            query: lastUserMsg.query ?? '',
+            category: lastAssistant.response.results?.[0]?.category,
+            location: lastAssistant.response.location,
+          }
+        : undefined;
+
       setIsSearching(true);
 
       // 1. Add user message immediately
@@ -78,7 +97,7 @@ export function useSearch() {
       });
 
       try {
-        const generator = searchStream(query.trim());
+        const generator = searchStream(query.trim(), undefined, prev);
 
         for await (const event of generator) {
           const { event: eventType, data } = event;
@@ -89,6 +108,21 @@ export function useSearch() {
               isStreaming: false,
               type: 'error',
               errorMessage: errMsg,
+              pipelineSteps: undefined,
+            });
+            break;
+          }
+
+          // Pipeline paused: the intent parser was unsure, ask the user.
+          if (eventType === 'clarification_needed') {
+            updateMessage(sessionId, assistantMsgId, {
+              isStreaming: false,
+              clarification: {
+                question: String(data.question ?? 'Could you clarify?'),
+                options: Array.isArray(data.options) ? (data.options as string[]) : [],
+                current_category: data.current_category as string | undefined,
+                current_location: data.current_location as string | undefined,
+              },
               pipelineSteps: undefined,
             });
             break;

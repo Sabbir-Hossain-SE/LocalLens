@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from app.models.intent import HistoryTurn
 from app.models.response import SearchResponse, StreamEvent
 from app.pipeline.orchestrator import run_pipeline
 from app.utils.cache import CacheManager
@@ -40,6 +41,9 @@ class SearchRequest(BaseModel):
 
     query: str
     user_ip: Optional[str] = None
+    # PDF §7.1 conversational memory: last few turns so the intent parser can
+    # detect follow-ups like "show me cheaper options" or "open now".
+    history: Optional[list[HistoryTurn]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +66,7 @@ def _extract_client_ip(request: Request) -> Optional[str]:
 
 
 async def _drain_pipeline(
-    query: str, user_ip: Optional[str]
+    query: str, user_ip: Optional[str], history: Optional[list[HistoryTurn]] = None
 ) -> SearchResponse:
     """
     Run the pipeline to completion and return the final SearchResponse.
@@ -70,7 +74,7 @@ async def _drain_pipeline(
     Collects all stream events and returns only the last ``done`` event's
     response payload.  Raises HTTPException on pipeline failure.
     """
-    async for event in run_pipeline(query, user_ip):
+    async for event in run_pipeline(query, user_ip, history=history):
         if event.event == "done":
             response_data = event.data.get("response")
             if response_data:
@@ -129,7 +133,7 @@ async def search(body: SearchRequest, request: Request) -> SearchResponse:
 
     start = time.monotonic()
     try:
-        response = await _drain_pipeline(query, user_ip)
+        response = await _drain_pipeline(query, user_ip, history=body.history)
         _cache.set(cache_key, response.model_dump())
         record_query(elapsed_ms=response.elapsed_ms, cache_hit=False)
         return response
@@ -155,6 +159,9 @@ async def search_stream(
     request: Request,
     query: str = Query(..., description="Natural language search query"),
     user_ip: Optional[str] = Query(default=None, description="Override caller IP for geolocation"),
+    prev_query: Optional[str] = Query(default=None, description="Previous user query (follow-up context)"),
+    prev_category: Optional[str] = Query(default=None, description="Previous resolved category"),
+    prev_location: Optional[str] = Query(default=None, description="Previous resolved location"),
 ) -> EventSourceResponse:
     """
     Stream pipeline progress as Server-Sent Events.
@@ -176,10 +183,21 @@ async def search_stream(
         raise HTTPException(status_code=400, detail="Query must not be empty")
 
     effective_ip = user_ip or _extract_client_ip(request)
+    history: Optional[list[HistoryTurn]] = None
+    if prev_query:
+        history = [
+            HistoryTurn(
+                query=prev_query,
+                category=prev_category,
+                location=prev_location,
+            )
+        ]
 
     async def event_generator() -> AsyncGenerator[dict, None]:
         try:
-            async for stream_event in run_pipeline(query.strip(), effective_ip):
+            async for stream_event in run_pipeline(
+                query.strip(), effective_ip, history=history
+            ):
                 payload = stream_event.model_dump_json()
                 yield {"event": stream_event.event, "data": payload}
                 if stream_event.event in ("done", "error"):

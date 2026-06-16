@@ -25,6 +25,7 @@ import yaml
 
 from app.models.business import BusinessListing
 from app.models.intent import ParsedIntent
+from app.utils.embeddings import cosine_similarity, embed_batch, embed_text
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -92,6 +93,25 @@ def _normalise_star_rating(rating: Optional[float]) -> float:
     if rating is None:
         return 0.0
     return max(0.0, min(1.0, rating / 5.0))
+
+
+def _listing_description(listing: BusinessListing) -> str:
+    """
+    Build a free-text description used for semantic embedding.
+
+    Concatenates the most discriminative attributes — name, category,
+    recurring review themes, and a short sample of review text — into a
+    single string. Keeps the length bounded so MiniLM's 256-token window
+    isn't wasted on boilerplate.
+    """
+    rd = listing.review_data
+    parts: List[str] = [listing.name, listing.category or ""]
+    if rd.recurring_themes:
+        parts.append(", ".join(rd.recurring_themes))
+    if rd.sample_reviews:
+        # First 1-2 review snippets, truncated
+        parts.append(" ".join(rd.sample_reviews[:2])[:400])
+    return " — ".join(p for p in parts if p)
 
 
 def _normalise_review_count(count: int, saturation: int = 100) -> float:
@@ -183,11 +203,31 @@ class ScoringEngine:
             sort preference.
         """
         weights = _get_weights_for_category(self._weights_config, intent.category)
-        logger.info("scoring_start", count=len(listings), weights=weights)
+        logger.info(
+            "scoring_start", count=len(listings), weights=weights, sort_by=intent.sort_by
+        )
+
+        # PDF §7.2 — semantic similarity becomes 30% of the composite when
+        # the user asked for semantic ranking. It steals from review_count
+        # (the least subjective of the four signals).
+        semantic_scores: List[float] = [0.0] * len(listings)
+        if intent.sort_by == "semantic":
+            q_vec = embed_text(intent.raw_query)
+            if q_vec is not None:
+                descriptions = [_listing_description(b) for b in listings]
+                vecs = embed_batch(descriptions)
+                semantic_scores = [
+                    cosine_similarity(q_vec, v) for v in vecs
+                ]
 
         scored: List[BusinessListing] = []
-        for listing in listings:
-            score = _compute_composite(listing, weights)
+        for i, listing in enumerate(listings):
+            base = _compute_composite(listing, weights)
+            if intent.sort_by == "semantic":
+                # 70 % weighted composite + 30 % semantic similarity, all in 0–100
+                score = round(0.7 * base + 0.3 * (semantic_scores[i] * 100), 2)
+            else:
+                score = base
             scored.append(listing.model_copy(update={"composite_score": score}))
 
         # Sort

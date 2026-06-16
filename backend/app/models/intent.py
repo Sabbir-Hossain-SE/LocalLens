@@ -63,11 +63,27 @@ class ParsedIntent(BaseModel):
         le=1.0,
         description="LLM confidence in the parsed intent (0-1)",
     )
+    is_followup: bool = Field(
+        default=False,
+        description="True when the query refines a previous result (e.g. 'show me cheaper ones')",
+    )
 
     @field_validator("sort_by", mode="before")
     @classmethod
     def validate_sort_by(cls, v: object) -> str:
         """Normalise the sort_by field and fall back to 'rating' for unknown values."""
-        allowed = {"rating", "distance", "reviews"}
+        allowed = {"rating", "distance", "reviews", "semantic"}
         v_str = str(v).lower().strip()
         return v_str if v_str in allowed else "rating"
+
+
+class HistoryTurn(BaseModel):
+    """One previous turn (query + parsed intent) of the conversation."""
+
+    query: str = Field(description="The user's natural-language query from this turn")
+    category: Optional[str] = Field(default=None, description="Category that was resolved")
+    location: Optional[str] = Field(default=None, description="Location that was resolved")
+    result_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs of the top results that were shown to the user",
+    )

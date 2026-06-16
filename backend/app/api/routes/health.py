@@ -57,6 +57,10 @@ async def health_check() -> dict:
         "llm_provider": settings.LLM_PROVIDER,
         "llm_model": settings.LLM_MODEL,
         "llm_reachable": llm_reachable,
+        "voice_transcription": {
+            "provider": "remote_whisper",
+            "configured": bool(settings.WHISPER_REMOTE_URL),
+        },
         "cache_status": {
             "entries": cache_stats.get("size", 0),
             "volume_bytes": cache_stats.get("volume_bytes", 0),

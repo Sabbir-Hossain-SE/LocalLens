@@ -1,19 +1,20 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Terminal } from 'lucide-react';
-import { useChatStore } from '@/store/chatStore';
-import { useSearch } from '@/hooks/useSearch';
-import UserMessage from './UserMessage';
-import SearchInput from './SearchInput';
-import PipelineProgress from './PipelineProgress';
-import ResultsList from '@/components/results/ResultsList';
+import { useEffect, useRef, useState } from "react";
+import { AlertCircle, Terminal } from "lucide-react";
+import { useChatStore } from "@/store/chatStore";
+import { useSearch } from "@/hooks/useSearch";
+import UserMessage from "./UserMessage";
+import SearchInput from "./SearchInput";
+import PipelineProgress from "./PipelineProgress";
+import ClarificationPrompt from "./ClarificationPrompt";
+import ResultsList from "@/components/results/ResultsList";
 
 const SUGGESTED_QUERIES = [
-  'Best sushi restaurants near me',
-  'Coffee shops in downtown Austin',
-  'Top dentists near zip 10001',
-  'Yoga studios in Seattle',
+  "Best sushi restaurants near me",
+  "Coffee shops in downtown Austin",
+  "Top dentists near zip 10001",
+  "Yoga studios in Seattle",
 ];
 
 const LOCALLENS_LOGO = (
@@ -26,12 +27,51 @@ const LOCALLENS_LOGO = (
     className="flex-shrink-0"
   >
     <circle cx="20" cy="20" r="20" fill="#10b981" fillOpacity="0.15" />
-    <circle cx="20" cy="20" r="8" stroke="#10b981" strokeWidth="2.5" fill="none" />
+    <circle
+      cx="20"
+      cy="20"
+      r="8"
+      stroke="#10b981"
+      strokeWidth="2.5"
+      fill="none"
+    />
     <circle cx="20" cy="20" r="3" fill="#10b981" />
-    <line x1="20" y1="6" x2="20" y2="12" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
-    <line x1="20" y1="28" x2="20" y2="34" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
-    <line x1="6" y1="20" x2="12" y2="20" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
-    <line x1="28" y1="20" x2="34" y2="20" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
+    <line
+      x1="20"
+      y1="6"
+      x2="20"
+      y2="12"
+      stroke="#10b981"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
+    <line
+      x1="20"
+      y1="28"
+      x2="20"
+      y2="34"
+      stroke="#10b981"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
+    <line
+      x1="6"
+      y1="20"
+      x2="12"
+      y2="20"
+      stroke="#10b981"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
+    <line
+      x1="28"
+      y1="20"
+      x2="34"
+      y2="20"
+      stroke="#10b981"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
   </svg>
 );
 
@@ -41,11 +81,11 @@ export default function ChatArea() {
   const session = getCurrentSession();
   const messages = session?.messages ?? [];
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [suggestedQuery, setSuggestedQuery] = useState('');
+  const [suggestedQuery, setSuggestedQuery] = useState("");
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const handleSuggestedQuery = (query: string) => {
@@ -53,7 +93,7 @@ export default function ChatArea() {
   };
 
   const handleSubmit = (query: string) => {
-    setSuggestedQuery('');
+    setSuggestedQuery("");
     submitQuery(query);
   };
 
@@ -86,7 +126,9 @@ export default function ChatArea() {
                              hover:border-brand/50 hover:bg-surface-hover hover:text-slate-100
                              transition-all duration-200 group"
                 >
-                  <span className="text-brand group-hover:text-brand-light mr-2 text-base">→</span>
+                  <span className="text-brand group-hover:text-brand-light mr-2 text-base">
+                    →
+                  </span>
                   {q}
                 </button>
               ))}
@@ -96,28 +138,36 @@ export default function ChatArea() {
           /* Message list */
           <>
             {messages.map((msg) => {
-              if (msg.type === 'user') {
+              if (msg.type === "user") {
                 return (
                   <UserMessage
                     key={msg.id}
-                    query={msg.query ?? ''}
+                    query={msg.query ?? ""}
                     timestamp={msg.timestamp}
                   />
                 );
               }
 
-              if (msg.type === 'error') {
+              if (msg.type === "error") {
                 return (
-                  <div key={msg.id} className="flex justify-start animate-slide-up">
+                  <div
+                    key={msg.id}
+                    className="flex justify-start animate-slide-up"
+                  >
                     <div className="max-w-[85%] bg-red-950/60 border border-red-800/50 rounded-2xl rounded-bl-sm p-4">
                       <div className="flex items-center gap-2 mb-2">
-                        <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
-                        <span className="text-red-400 font-medium text-sm">Error</span>
+                        <AlertCircle
+                          size={16}
+                          className="text-red-400 flex-shrink-0"
+                        />
+                        <span className="text-red-400 font-medium text-sm">
+                          Error
+                        </span>
                       </div>
                       <pre className="text-red-300 text-xs font-mono whitespace-pre-wrap leading-relaxed">
                         {msg.errorMessage}
                       </pre>
-                      {msg.errorMessage?.includes('uvicorn') && (
+                      {msg.errorMessage?.includes("uvicorn") && (
                         <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
                           <Terminal size={12} />
                           <code className="text-slate-400">
@@ -132,14 +182,19 @@ export default function ChatArea() {
 
               // Assistant message
               return (
-                <div key={msg.id} className="flex justify-start animate-slide-up">
+                <div
+                  key={msg.id}
+                  className="flex justify-start animate-slide-up"
+                >
                   <div className="max-w-[90%] w-full">
                     {/* Avatar */}
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-7 h-7 rounded-lg bg-brand/20 border border-brand/30 flex items-center justify-center">
                         <div className="w-3 h-3 rounded-full bg-brand" />
                       </div>
-                      <span className="text-xs font-medium text-slate-400">LocalLens AI</span>
+                      <span className="text-xs font-medium text-slate-400">
+                        LocalLens AI
+                      </span>
                     </div>
 
                     <div className="bg-surface-card border border-surface-border rounded-2xl rounded-tl-sm p-4">
@@ -147,12 +202,21 @@ export default function ChatArea() {
                         <PipelineProgress steps={msg.pipelineSteps} />
                       )}
 
+                      {!msg.isStreaming && msg.clarification && (
+                        <ClarificationPrompt
+                          payload={msg.clarification}
+                          onPick={(answer) => handleSubmit(answer)}
+                        />
+                      )}
+
                       {!msg.isStreaming && msg.response && (
                         <ResultsList response={msg.response} />
                       )}
 
-                      {!msg.isStreaming && !msg.response && (
-                        <p className="text-slate-500 text-sm italic">No results returned.</p>
+                      {!msg.isStreaming && !msg.response && !msg.clarification && (
+                        <p className="text-slate-500 text-sm italic">
+                          No results returned.
+                        </p>
                       )}
                     </div>
                   </div>
@@ -170,7 +234,7 @@ export default function ChatArea() {
           onSubmit={handleSubmit}
           isLoading={isSearching}
           initialValue={suggestedQuery}
-          onInitialValueConsumed={() => setSuggestedQuery('')}
+          onInitialValueConsumed={() => setSuggestedQuery("")}
         />
       </div>
     </div>

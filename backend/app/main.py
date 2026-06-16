@@ -27,7 +27,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import health_router, metrics_router, search_router
+from app.api.routes import (
+    health_router,
+    metrics_router,
+    search_router,
+    transcribe_router,
+)
 from app.config import get_settings
 from app.modules.scoring_engine import _load_weights
 from app.utils.cache import CacheManager
@@ -122,6 +127,7 @@ app.add_middleware(
 app.include_router(search_router)
 app.include_router(health_router)
 app.include_router(metrics_router)
+app.include_router(transcribe_router)
 
 
 # ---- Root ----
