@@ -193,40 +193,226 @@ def _check_playwright() -> bool:
 async def _scrape_reviews_playwright(
     maps_url: str, max_reviews: int = 10, timeout_s: float = 12.0
 ) -> List[Review]:
-    """
-    Scrape review text + relative timestamps from a Google Maps search result.
+    """Back-compatible wrapper returning only review texts."""
+    reviews, _, _ = await _scrape_maps_details(maps_url, max_reviews, timeout_s)
+    return reviews
 
-    Uses Playwright headless Chromium. Robust to layout changes: returns whatever
-    review-like text it can find, with empty result on any failure.
+
+async def _fetch_rating_from_ddg(name: str, address: Optional[str] = None) -> tuple[Optional[float], int]:
+    """
+    Fetch rating and review count from DuckDuckGo search snippet.
+
+    DuckDuckGo's knowledge-graph snippets often include "4.3 (1,953 reviews)"
+    from Google's structured data, which is not accessible via headless Maps scraping.
+    """
+    try:
+        from duckduckgo_search import DDGS  # type: ignore
+
+        query = name
+        if address:
+            query = f"{name} {address}"
+        async with asyncio.timeout(8):
+            results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: list(DDGS().text(query, max_results=3)),
+            )
+        full_text = " ".join((r.get("body", "") + " " + r.get("title", "")) for r in results)
+        full_text = _normalise_digits(full_text)
+        rating_match = re.search(r"\b([1-5]\.\d)\s*(?:stars?|[★☆✩]|\([\d,]+\))", full_text, re.I)
+        count_match = re.search(r"([\d,]{2,})\s*(?:reviews?|ratings?)", full_text, re.I)
+        rating = float(rating_match.group(1)) if rating_match else None
+        count = _parse_review_count(count_match.group(1)) if count_match else 0
+        return rating, count
+    except Exception as exc:
+        logger.debug("ddg_rating_fetch_error", error=str(exc))
+        return None, 0
+
+
+def _parse_review_count(raw: str) -> int:
+    """Parse review count strings like '1,234' or '(243)'."""
+    try:
+        return int(re.sub(r"[^0-9]", "", raw))
+    except ValueError:
+        return 0
+
+
+def _extract_rating_count(text: str) -> tuple[Optional[float], int]:
+    """Extract Google Maps average rating and review count from page text."""
+    rating: Optional[float] = None
+    total_reviews = 0
+
+    # Pattern 1: "4.3 stars" / "4.3 ★" / "4.3 ☆"
+    rating_match = re.search(r"\b([1-5](?:\.\d)?)\s*(?:stars?|[★☆✩])", text, re.I)
+    # Pattern 2: "4.3 (1,953)" — rating followed immediately by parenthesised count
+    if not rating_match:
+        rating_match = re.search(r"\b([1-5]\.\d)\s*\([\d,]+\)", text)
+    # Pattern 3: "Rated 4.3 out of 5" style
+    if not rating_match:
+        rating_match = re.search(r"[Rr]ated\s+([1-5](?:\.\d)?)\s+out\s+of", text)
+    # Pattern 4: standalone decimal in valid rating range (last resort)
+    if not rating_match:
+        rating_match = re.search(r"\b([1-5]\.\d)\b", text)
+    if rating_match:
+        try:
+            rating = float(rating_match.group(1))
+        except ValueError:
+            rating = None
+
+    # Review count: "1,953 reviews" or "1953 Google reviews" or bare "(1,953)"
+    count_match = re.search(r"\(?([\d,]{2,})\)?\s*(?:reviews?|Google reviews?)", text, re.I)
+    if not count_match:
+        # parenthesised number right after a rating decimal, e.g. "4.3 (1,953)"
+        count_match = re.search(r"[1-5]\.\d\s*\(([\d,]+)\)", text)
+    if count_match:
+        total_reviews = _parse_review_count(count_match.group(1))
+
+    return rating, total_reviews
+
+
+_UNICODE_DIGIT_TABLE = str.maketrans(
+    "٠١٢٣٤٥٦٧٨٩"   # Arabic-Indic
+    "۰۱۲۳۴۵۶۷۸۹"   # Extended Arabic-Indic (Persian/Urdu)
+    "০১২৩৪৫৬৭৮৯"   # Bengali
+    "੦੧੨੩੪੫੬੭੮੯"   # Gurmukhi
+    "૦૧૨૩૪૫૬૭૮૯"   # Gujarati
+    "０１２３４５６７８９",  # Full-width
+    "0123456789" * 6,
+)
+
+
+def _normalise_digits(text: str) -> str:
+    """Replace locale-specific numeral forms with ASCII digits."""
+    return text.translate(_UNICODE_DIGIT_TABLE)
+
+
+async def _scrape_maps_details(
+    maps_url: str, max_reviews: int = 10, timeout_s: float = 20.0
+) -> tuple[List[Review], Optional[float], int]:
+    """
+    Scrape review text, average rating, and review count from Google Maps.
+
+    Uses Playwright headless Chromium. Tries three extraction strategies in order:
+    1. JavaScript aria-label / JSON-LD evaluation (most reliable).
+    2. Regex on full page inner_text (catches most layouts).
+    3. BeautifulSoup HTML parse for review snippets.
     """
     if not _check_playwright():
-        return []
+        return ([], None, 0)
 
     from playwright.async_api import async_playwright  # type: ignore
 
+    # Force English locale via URL parameter — overrides server-side language detection
+    if "hl=" not in maps_url:
+        sep = "&" if "?" in maps_url else "?"
+        maps_url = f"{maps_url}{sep}hl=en"
+
     reviews: List[Review] = []
+    rating: Optional[float] = None
+    total_reviews = 0
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            )
             context = await browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
                 ),
                 locale="en-US",
+                # Force English response from Google regardless of system locale
+                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+                viewport={"width": 1280, "height": 720},
+            )
+            # Remove headless detection signals
+            await context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                "window.chrome = {runtime: {}};"
             )
             page = await context.new_page()
             try:
                 await page.goto(maps_url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
-                # Let the JS settle and reviews mount.
-                await page.wait_for_timeout(2000)
+                # Dismiss cookie/consent banner if present (EU regions)
+                try:
+                    accept_btn = page.locator('button:has-text("Accept all"), button:has-text("Reject all"), form[action*="consent"] button')
+                    if await accept_btn.first.is_visible(timeout=2000):
+                        await accept_btn.first.click()
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # Give JS enough time to render ratings and reviews
+                await page.wait_for_timeout(4000)
+
+                # --- Strategy 1: JavaScript extraction via DOM ---
+                try:
+                    js_data: dict = await page.evaluate("""
+                        () => {
+                            let rating = null;
+                            let reviewCount = 0;
+
+                            // aria-label="4.3 stars" on the rating widget
+                            const starEls = document.querySelectorAll('[aria-label]');
+                            for (const el of starEls) {
+                                const lbl = el.getAttribute('aria-label') || '';
+                                const m = lbl.match(/([1-5][.,]\\d)\\s*star/i);
+                                if (m) { rating = parseFloat(m[1].replace(',', '.')); break; }
+                            }
+
+                            // aria-label="1,953 reviews"
+                            for (const el of starEls) {
+                                const lbl = el.getAttribute('aria-label') || '';
+                                const m = lbl.match(/([\\d,]+)\\s+review/i);
+                                if (m) { reviewCount = parseInt(m[1].replace(/,/g, '')); break; }
+                            }
+
+                            // JSON-LD structured data
+                            const jsonLdEl = document.querySelector('script[type="application/ld+json"]');
+                            if (jsonLdEl) {
+                                try {
+                                    const d = JSON.parse(jsonLdEl.textContent || '{}');
+                                    const agg = d.aggregateRating || {};
+                                    if (!rating && agg.ratingValue) rating = parseFloat(agg.ratingValue);
+                                    if (!reviewCount && agg.reviewCount) reviewCount = parseInt(agg.reviewCount);
+                                } catch (_) {}
+                            }
+
+                            return { rating, reviewCount };
+                        }
+                    """)
+                    if js_data.get("rating"):
+                        rating = float(js_data["rating"])
+                    if js_data.get("reviewCount"):
+                        total_reviews = int(js_data["reviewCount"])
+                    logger.debug("js_extraction", rating=rating, reviews=total_reviews)
+                except Exception as js_exc:
+                    logger.debug("js_extraction_error", error=str(js_exc))
+
+                # --- Strategy 2: regex on visible text (normalise non-ASCII digits first) ---
                 html = await page.content()
+                page_text = _normalise_digits(
+                    await page.locator("body").inner_text(timeout=3000)
+                )
+                if rating is None or total_reviews == 0:
+                    text_rating, text_count = _extract_rating_count(page_text)
+                    if rating is None:
+                        rating = text_rating
+                    if total_reviews == 0:
+                        total_reviews = text_count
+
+                logger.info(
+                    "maps_scrape_complete",
+                    url=maps_url,
+                    rating=rating,
+                    total_reviews=total_reviews,
+                )
             finally:
                 await context.close()
                 await browser.close()
     except Exception as exc:
         logger.warning("playwright_scrape_error", url=maps_url, error=str(exc))
-        return []
+        return ([], None, 0)
 
     try:
         from bs4 import BeautifulSoup  # type: ignore
@@ -251,7 +437,7 @@ async def _scrape_reviews_playwright(
     except Exception as exc:
         logger.warning("review_html_parse_error", error=str(exc))
 
-    return reviews
+    return (reviews, rating, total_reviews)
 
 
 # ---------------------------------------------------------------------------
@@ -291,9 +477,25 @@ class ReviewAggregator:
         # 1. Collect reviews — start from any pre-attached snippets, then
         #    augment via Playwright scrape if possible.
         scraped: List[Review] = []
+        scraped_rating: Optional[float] = None
+        scraped_total_reviews = 0
         if listing.maps_url:
             async with self._scrape_sem:
-                scraped = await _scrape_reviews_playwright(listing.maps_url)
+                scraped, scraped_rating, scraped_total_reviews = await _scrape_maps_details(
+                    listing.maps_url
+                )
+
+        # If Maps scraping didn't return the review count (common when Google
+        # serves a headless-throttled page), fall back to DuckDuckGo snippets
+        # which often carry the knowledge-graph count.
+        if scraped_total_reviews == 0 or scraped_rating is None:
+            ddg_rating, ddg_count = await _fetch_rating_from_ddg(
+                listing.name, listing.address
+            )
+            if scraped_rating is None:
+                scraped_rating = ddg_rating
+            if scraped_total_reviews == 0:
+                scraped_total_reviews = ddg_count
 
         # Snippets already attached (DDG body, etc.) become Reviews without timestamps.
         prior = [
@@ -317,8 +519,14 @@ class ReviewAggregator:
         themes = _extract_themes(texts) if texts else []
 
         # 5. Confidence
-        total_reviews = listing.review_data.total_reviews or len(all_reviews)
+        total_reviews = max(
+            listing.review_data.total_reviews,
+            scraped_total_reviews,
+            len(all_reviews),
+        )
         avg_rating = listing.review_data.average_rating
+        if avg_rating is None:
+            avg_rating = scraped_rating
         low_confidence = total_reviews < 5 or avg_rating is None
         reason: Optional[str] = None
         if total_reviews == 0:

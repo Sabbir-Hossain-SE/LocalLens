@@ -1,4 +1,4 @@
-import type { SearchResponse, StreamEvent } from './types';
+import type { HealthResponse, MetricsResponse, SearchResponse, StreamEvent } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -31,7 +31,8 @@ export interface PrevTurn {
 export function searchStream(
   query: string,
   userIp?: string,
-  prev?: PrevTurn
+  prev?: PrevTurn,
+  signal?: AbortSignal
 ): AsyncGenerator<StreamEvent> {
   const params = new URLSearchParams({ query });
   if (userIp) params.set('user_ip', userIp);
@@ -48,6 +49,19 @@ export function searchStream(
   let streamError: Error | null = null;
 
   const source = new EventSource(url);
+  const abort = () => {
+    if (finished) return;
+    streamError = new DOMException('Search cancelled', 'AbortError');
+    finished = true;
+    source.close();
+    wake();
+  };
+
+  if (signal?.aborted) {
+    abort();
+  } else {
+    signal?.addEventListener('abort', abort, { once: true });
+  }
 
   const wake = () => {
     if (resolveNext) {
@@ -78,6 +92,7 @@ export function searchStream(
     'reviews_aggregated',
     'scoring_complete',
     'summary_ready',
+    'clarification_needed',
     'done',
     'error',
   ];
@@ -115,6 +130,8 @@ export function searchStream(
         }
       }
     } finally {
+      signal?.removeEventListener('abort', abort);
+      finished = true;
       source.close();
     }
   }
@@ -122,10 +139,16 @@ export function searchStream(
   return generator();
 }
 
-export async function getHealth(): Promise<{ status: string; version: string }> {
+export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_BASE}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-  return res.json() as Promise<{ status: string; version: string }>;
+  return res.json() as Promise<HealthResponse>;
+}
+
+export async function getMetrics(): Promise<MetricsResponse> {
+  const res = await fetch(`${API_BASE}/metrics`);
+  if (!res.ok) throw new Error(`Metrics failed: ${res.status}`);
+  return res.json() as Promise<MetricsResponse>;
 }
 
 function audioFilenameFor(blob: Blob): string {

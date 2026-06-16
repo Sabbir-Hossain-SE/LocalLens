@@ -41,9 +41,24 @@ export interface BusinessListing {
   source: string;
   review_data: ReviewData;
   composite_score: number;
+  scoring_details?: ScoringDetails | null;
   rank: number;
   summary: string | null;
   maps_url: string | null;
+}
+
+export interface ScoreComponent {
+  raw: number | null;
+  normalised: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface ScoringDetails {
+  final_score: number;
+  components: Record<string, ScoreComponent>;
+  semantic_similarity?: number | null;
+  explanation: string;
 }
 
 export interface SearchResponse {
@@ -52,13 +67,45 @@ export interface SearchResponse {
   total_results: number;
   results: BusinessListing[];
   elapsed_ms: number;
-  pipeline_steps: PipelineStep[];
+  pipeline_steps: PipelineStepMeta[];
 }
 
 export interface PipelineStep {
   step: string;
   status: 'pending' | 'running' | 'done' | 'error';
   detail?: string;
+}
+
+export interface PipelineStepMeta {
+  stage: string;
+  status: string;
+  elapsed_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface HealthResponse {
+  status: string;
+  version: string;
+  llm_provider: string;
+  llm_model: string;
+  llm_reachable: boolean;
+  voice_transcription?: {
+    provider: string;
+    configured: boolean;
+  };
+  cache_status?: {
+    entries: number;
+    volume_bytes: number;
+  };
+}
+
+export interface MetricsResponse {
+  total_queries: number;
+  cache_hit_rate: number;
+  avg_latency_ms: number;
+  errors: number;
+  cache_hits: number;
+  cache_misses: number;
 }
 
 export type StreamEventType =
@@ -95,6 +142,7 @@ export interface ChatMessage {
   response?: SearchResponse;
   pipelineSteps?: PipelineStep[];
   isStreaming?: boolean;
+  cancelled?: boolean;
   timestamp: Date;
   errorMessage?: string;
   clarification?: ClarificationPayload;

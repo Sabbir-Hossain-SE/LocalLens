@@ -8,7 +8,7 @@ from the search agent all the way to the response formatter.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -72,6 +72,24 @@ class ReviewData(BaseModel):
     )
 
 
+class ScoreComponent(BaseModel):
+    """One normalised input used in the final score."""
+
+    raw: Optional[float] = Field(default=None, description="Original signal value")
+    normalised: float = Field(default=0.0, ge=0.0, le=1.0, description="Normalised 0-1 value")
+    weight: float = Field(default=0.0, ge=0.0, description="Weight used in the formula")
+    contribution: float = Field(default=0.0, ge=0.0, description="Weighted contribution in points")
+
+
+class ScoringDetails(BaseModel):
+    """Human-readable breakdown of the score shown in the UI."""
+
+    final_score: float = Field(default=0.0, ge=0.0, le=100.0)
+    components: Dict[str, ScoreComponent] = Field(default_factory=dict)
+    semantic_similarity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    explanation: str = Field(default="")
+
+
 class BusinessListing(BaseModel):
     """A single business listing enriched with reviews, scoring, and a summary."""
 
@@ -95,6 +113,9 @@ class BusinessListing(BaseModel):
     )
     composite_score: float = Field(
         default=0.0, ge=0.0, le=100.0, description="Weighted composite quality score (0-100)"
+    )
+    scoring_details: Optional[ScoringDetails] = Field(
+        default=None, description="Breakdown of weighted score inputs"
     )
     rank: int = Field(default=0, ge=0, description="1-based rank in the final results list")
     summary: Optional[str] = Field(

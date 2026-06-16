@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { MapPin, ExternalLink, Navigation } from 'lucide-react';
-import type { BusinessListing } from '@/lib/types';
-import { getScoreColor } from '@/lib/utils';
+import { MapPin, ExternalLink, Navigation, Star, Workflow, Database } from 'lucide-react';
+import type { BusinessListing, SearchResponse } from '@/lib/types';
+import { formatElapsed, getScoreColor } from '@/lib/utils';
 
 interface MapPanelProps {
+  response?: SearchResponse;
   results: BusinessListing[];
   location: string;
 }
@@ -35,11 +36,17 @@ declare global {
   }
 }
 
-export default function MapPanel({ results, location }: MapPanelProps) {
+export default function MapPanel({ response, results, location }: MapPanelProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<LeafletMap | null>(null);
 
   const geocodedResults = results.filter((r) => r.lat !== null && r.lng !== null);
+  const topResult = results[0];
+  const sourceCounts = results.reduce<Record<string, number>>((acc, item) => {
+    acc[item.source] = (acc[item.source] ?? 0) + 1;
+    return acc;
+  }, {});
+  const pipelineSteps = response?.pipeline_steps ?? [];
 
   // Build Google Maps URL for route (all results)
   const googleMapsUrl = geocodedResults.length > 0
@@ -180,6 +187,75 @@ export default function MapPanel({ results, location }: MapPanelProps) {
         </a>
       </div>
 
+      {topResult && (
+        <div className="flex-shrink-0 px-4 py-3 border-b border-surface-border bg-surface-card/45">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-slate-600 font-semibold">
+                Top score
+              </p>
+              <h3 className="text-sm font-semibold text-slate-200 truncate">
+                {topResult.name}
+              </h3>
+            </div>
+            <div className="text-right">
+              <div className="text-xl font-bold text-brand">
+                {Math.round(topResult.composite_score)}
+              </div>
+              <div className="text-[10px] text-slate-600">/100</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <Star size={12} className="text-amber-400" fill="currentColor" />
+            <span>
+              {topResult.review_data.average_rating
+                ? `${topResult.review_data.average_rating.toFixed(1)} rating`
+                : 'No rating'}
+            </span>
+            <span>·</span>
+            <span>{topResult.review_data.total_reviews} reviews</span>
+          </div>
+        </div>
+      )}
+
+      {response && (
+        <div className="flex-shrink-0 px-4 py-3 border-b border-surface-border">
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="rounded-lg bg-surface-card/50 border border-surface-border px-2 py-2">
+              <div className="text-sm font-semibold text-slate-200">{response.total_results}</div>
+              <div className="text-[10px] text-slate-600">ranked</div>
+            </div>
+            <div className="rounded-lg bg-surface-card/50 border border-surface-border px-2 py-2">
+              <div className="text-sm font-semibold text-slate-200">
+                {formatElapsed(response.elapsed_ms)}
+              </div>
+              <div className="text-[10px] text-slate-600">runtime</div>
+            </div>
+            <div className="rounded-lg bg-surface-card/50 border border-surface-border px-2 py-2">
+              <div className="text-sm font-semibold text-slate-200">
+                {Object.keys(sourceCounts).length}
+              </div>
+              <div className="text-[10px] text-slate-600">sources</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 mb-2 text-[11px] text-slate-500">
+            <Database size={12} className="text-brand" />
+            Source coverage
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(sourceCounts).map(([source, count]) => (
+              <span
+                key={source}
+                className="px-2 py-1 rounded-md bg-surface-card border border-surface-border text-[11px] text-slate-400 uppercase"
+              >
+                {source} {count}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Map container */}
       <div className="flex-shrink-0 h-56 relative">
         <div ref={mapContainerRef} className="absolute inset-0" />
@@ -243,6 +319,65 @@ export default function MapPanel({ results, location }: MapPanelProps) {
           })}
         </div>
       </div>
+
+      {topResult?.scoring_details && (
+        <div className="flex-shrink-0 border-t border-surface-border bg-surface-DEFAULT px-4 py-3 max-h-[45vh] overflow-y-auto scrollbar-thin">
+          {pipelineSteps.length > 0 && (
+            <div className="mb-4">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Workflow size={12} className="text-brand" />
+                <h3 className="text-xs font-semibold text-slate-300">Pipeline detail</h3>
+              </div>
+              <div className="space-y-1.5">
+                {pipelineSteps.slice(0, 7).map((step) => (
+                  <div
+                    key={String(step.stage)}
+                    className="flex items-center justify-between gap-2 text-[11px]"
+                  >
+                    <span className="text-slate-500 truncate">
+                      {String(step.stage).replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-slate-400">
+                      {typeof step.elapsed_ms === 'number' ? formatElapsed(step.elapsed_ms) : step.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-slate-300">Score details</h3>
+            <span className="text-xs text-brand font-semibold">
+              {Math.round(topResult.scoring_details.final_score)}/100
+            </span>
+          </div>
+          <div className="space-y-2">
+            {Object.entries(topResult.scoring_details.components).map(([key, part]) => {
+              const label = key.replace(/_/g, ' ');
+              return (
+                <div key={key}>
+                  <div className="flex items-center justify-between text-[11px] mb-1">
+                    <span className="text-slate-500 capitalize">{label}</span>
+                    <span className="text-slate-400">
+                      +{part.contribution.toFixed(1)}
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-surface-card rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-brand"
+                      style={{ width: `${Math.max(3, Math.min(100, part.normalised * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">
+            {topResult.scoring_details.explanation}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

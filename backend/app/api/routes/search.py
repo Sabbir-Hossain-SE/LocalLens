@@ -208,6 +208,9 @@ async def search_stream(
                     else:
                         record_error()
                     break
+        except GeneratorExit:
+            logger.info("sse_generator_cancelled", query=query[:60])
+            raise
         except Exception as exc:
             logger.error("sse_generator_error", error=str(exc))
             record_error()
