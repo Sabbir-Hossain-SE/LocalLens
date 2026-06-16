@@ -64,6 +64,8 @@ backend/temp/
 
 *.swo
 
+.claude/
+
 
 
 # OS
@@ -147,6 +149,7 @@ backend/.sentence_transformers/
 node_modules/
 
 frontend/node_modules/
+docs/
 
 
 
@@ -237,6 +240,7 @@ logs/
 
 
 .claude/settings.local.json
+
 
 
 
